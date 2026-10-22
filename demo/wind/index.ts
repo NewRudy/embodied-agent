@@ -1,0 +1,297 @@
+// 演示：把具身智能体挂到「老鸦岭风电场」场景上。
+//
+// 与巡界的区别：
+//   - 没有任务状态机、没有审批、没有回执
+//   - 语音/文字 → 目标 → 每帧解算 → setWorldMovement
+//   - 走到一半可以随时改目标，运动不重启
+//
+// 运行：见项目根目录 README。
+
+import {
+    Cartesian3, Cesium3DTileset, Color, HeadingPitchRoll, Math as CMath, Matrix3, Matrix4, Model,
+    ModelAnimationLoop, Transforms, Viewer,
+} from 'cesium';
+import 'cesium/Build/Cesium/Widgets/widgets.css';
+import { playerController, type PlayerModelOptions } from 'cesium-player-controller';
+import type { ColliderSource } from 'cesium-player-controller';
+
+import { EmbodiedAgent } from '../../src/agent.ts';
+import { parseIntent } from '../../src/intent.ts';
+import { CesiumSceneAdapter, EnuFrame, applyOutput, type PlayerLike } from '../../src/cesium-adapter.ts';
+import type { Goal, Vec3 } from '../../src/types.ts';
+
+// 资源从巡界仓库直接引用，避免复制大文件
+const ASSET_BASE = '/xunjie-assets/';
+
+interface FarmOffset { east: number; north: number; up: number }
+interface FarmTurbine {
+    id: string; label: string; no: number; checkpointId: string;
+    offset: FarmOffset; headingDeg: number; riskLevel: string; stateNote: string;
+}
+interface FarmFixture {
+    sceneId: string; sceneRevision: string; name: string;
+    origin: { lon: number; lat: number; heightM: number };
+    assets: {
+        mountain: { tilesetUrl: string; gltfUrl: string; colliderModelMatrix: number[]; credit: string };
+        turbine: { gltfUrl: string; scale: number; rotorAnimation: string; credit: string };
+        player: { glbUrl: string; scale: number };
+    };
+    opsPoint: { id: string; label: string; offset: FarmOffset };
+    turbines: FarmTurbine[];
+}
+
+const log = (...args: unknown[]) => {
+    const el = document.getElementById('log');
+    if (el) {
+        const line = document.createElement('div');
+        line.textContent = args.join(' ');
+        el.prepend(line);
+        while (el.childElementCount > 60) el.lastElementChild?.remove();
+    }
+    console.log(...args);
+};
+
+async function main() {
+    const farm: FarmFixture = await fetch(`${ASSET_BASE}wind/farm.json`).then((r) => r.json());
+
+    const origin = Cartesian3.fromDegrees(
+        farm.origin.lon, farm.origin.lat, farm.origin.heightM,
+    );
+    const enuFrame = new EnuFrame(origin);
+    const enuToEcef = (o: FarmOffset) => enuFrame.toEcef({ east: o.east, north: o.north, up: o.up });
+
+    const viewer = new Viewer('cesiumContainer', {
+        timeline: false,
+        animation: false,
+        baseLayerPicker: false,
+        geocoder: false,
+        homeButton: false,
+        sceneModePicker: false,
+        navigationHelpButton: false,
+        infoBox: false,
+        selectionIndicator: false,
+        // 本演示不依赖 Cesium ion；去掉默认影像与地形，避免无 token 时报错
+        baseLayer: false,
+        terrainProvider: undefined,
+    });
+    viewer.scene.globe.depthTestAgainstTerrain = true;
+    // 深色底，避免无影像时一片惨白
+    viewer.scene.globe.baseColor = Color.fromCssColorString('#1b2430');
+    viewer.scene.skyAtmosphere.show = false;
+    viewer.scene.fog.enabled = false;
+
+    // —— 地形瓦片 ——
+    const tileset = await Cesium3DTileset.fromUrl(`${ASSET_BASE}${farm.assets.mountain.tilesetUrl}`);
+    viewer.scene.primitives.add(tileset);
+    // 等瓦片真正就绪后再定视角，否则相机落在包围球内部看不到东西
+    await tileset.readyPromise;
+
+    // —— 风机 ——
+    for (const t of farm.turbines) {
+        const position = enuToEcef(t.offset);
+        const hpr = new HeadingPitchRoll(CMath.toRadians(t.headingDeg), 0, 0);
+        const modelMatrix = Transforms.headingPitchRollToFixedFrame(position, hpr);
+        const model = await Model.fromGltfAsync({
+            url: `${ASSET_BASE}${farm.assets.turbine.gltfUrl}`,
+            modelMatrix,
+            scale: farm.assets.turbine.scale,
+        });
+        viewer.scene.primitives.add(model);
+        // 等模型真正就绪后再取动画，否则 activeAnimations 尚未挂上
+        await model.readyPromise;
+        const anims = model.activeAnimations;
+        if (anims && anims.length > 0) {
+            const clip = anims.addAll();
+            clip.forEach((a) => {
+                a.loop = ModelAnimationLoop.REPEAT;
+                a.play();
+            });
+        }
+    }
+
+    // —— 人物 ——
+    // 出生点抬到运维点上方 3 米，让物理先落地（与巡界 demo 一致）
+    const spawnOffset = farm.opsPoint.offset;
+    const spawn = enuFrame.toEcef({
+        east: spawnOffset.east,
+        north: spawnOffset.north,
+        up: spawnOffset.up + 3,
+    });
+
+    const playerModel: PlayerModelOptions = {
+        url: `${ASSET_BASE}${farm.assets.player.glbUrl}`,
+        scale: farm.assets.player.scale,
+        idleAnim: 'Idle_Loop',
+        walkAnim: 'Walk_Loop',
+        runAnim: 'Sprint_Loop',
+        jumpAnim: ['Jump_Start', 'Jump_Loop', 'Jump_Land'],
+        flyAnim: 'fly',
+        flyIdleAnim: 'flyIdle',
+        flyHoverForwardAnim: 'flyHoverForward',
+        flyHoverBackAnim: 'flyHoverBack',
+        flyHoverLeftAnim: 'flyHoverLeft',
+        flyHoverRightAnim: 'flyHoverRight',
+        flyHoverUpAnim: 'flyHoverUp',
+        flyHoverDownAnim: 'flyHoverDown',
+        rotateY: -Math.PI / 2,
+        facingOffset: Math.PI / 2,
+    };
+
+    // 碰撞矩阵 = colliderModelMatrix × RotX(+90°)，把 glTF 的 Y-up 校正到 Rapier 的 Z-up。
+    // 漏掉这步三角网会整体转向，人物直接从山体里穿下去。
+    const yUpToZUp = Matrix4.fromRotationTranslation(
+        Matrix3.fromRotationX(CMath.PI_OVER_TWO), Cartesian3.ZERO, new Matrix4());
+    const colliderMatrix = Matrix4.multiply(
+        Matrix4.fromColumnMajorArray(farm.assets.mountain.colliderModelMatrix, new Matrix4()),
+        yUpToZUp, new Matrix4());
+
+    const gltfCollider: ColliderSource = {
+        type: 'gltf',
+        url: `${ASSET_BASE}${farm.assets.mountain.gltfUrl}`,
+        modelMatrix: Matrix4.toArray(colliderMatrix),
+    };
+
+    const player = new playerController();
+    await player.init({
+        viewer,
+        initPos: spawn,
+        minCamDistance: 120,
+        maxCamDistance: 600,
+        camLookAtHeightRatio: 0.7,
+        enableSpringCamera: true,
+        springCameraTime: 0.07,
+        thirdMouseMode: 2,
+        playerModelConfig: playerModel,
+        staticCollider: [gltfCollider],
+    });
+    player.setPlayerSpeed(500);
+    player.setPlayerFlySpeed(3000);
+
+    // —— 参照物表：口语 → ENU ——
+    const references = new Map<string, Vec3>();
+    references.set(farm.opsPoint.label, { ...spawnOffset });
+    references.set('运维点', { ...spawnOffset });
+    for (const t of farm.turbines) {
+        const v: Vec3 = { ...t.offset };
+        references.set(t.label, v);
+        references.set(`${t.no}号风机`, v);
+        references.set(`${t.no}号机组`, v);
+        references.set(`风机${t.no}`, v);
+    }
+
+    const adapter = new CesiumSceneAdapter({
+        player: player as unknown as PlayerLike,
+        frame: enuFrame,
+        references,
+    });
+
+    const agent = new EmbodiedAgent(adapter, {
+        origin: { east: spawnOffset.east, north: spawnOffset.north, up: spawnOffset.up },
+        config: { walkSpeed: 5, runSpeed: 9, boundsRadius: 1500 },
+    });
+
+    // —— 每帧驱动 ——
+    // 注意：playerController 不自己跑主循环，必须外部每帧调用 player.update()。
+    // 顺序也很关键：先解算智能体并写入 worldMovement，再 update 让物理消费它。
+    let last = performance.now();
+    let lastLoggedState = '';
+    viewer.scene.preUpdate.addEventListener(() => {
+        const now = performance.now();
+        const dt = Math.min((now - last) / 1000, 0.1);
+        last = now;
+
+        const out = agent.update(dt);
+        applyOutput(player as unknown as PlayerLike, out);
+        player.update();
+
+        // 状态变化时写日志
+        const key = `${out.state}:${out.failure ?? ''}`;
+        if (key !== lastLoggedState) {
+            lastLoggedState = key;
+            if (out.justArrived) log(`✅ 到达 ${out.goal?.label ?? ''}`);
+            else if (out.failure) log(`⚠️ 失败：${out.failure}`);
+            else if (out.state === 'active') log(`▶ 出发 → ${out.goal?.label ?? ''} (${(out.distance ?? 0).toFixed(0)}m)`);
+        }
+        // 距离读数
+        const readout = document.getElementById('readout');
+        if (readout) {
+            const d = out.distance;
+            readout.textContent = d == null
+                ? `状态 ${out.state}`
+                : `状态 ${out.state} · 距目标 ${d.toFixed(1)} m · 速度 ${out.movement.speedMetersPerSecond.toFixed(1)} m/s`;
+        }
+    });
+
+    // —— 输入处理 ——
+    const input = document.getElementById('cmd') as HTMLInputElement | null;
+
+    function handleCommand(text: string) {
+        if (!text.trim()) return;
+        log(`🗣 ${text}`);
+
+        const pose = adapter.getPose();
+        const intent = parseIntent(text, {
+            pose: { east: pose.east, north: pose.north, yaw: pose.yaw },
+            goal: agent.currentGoal,
+            resolve: (t) => adapter.resolveReference(t),
+            defaultStep: 10,
+        });
+
+        if (!intent) {
+            log('   → 没听懂');
+            return;
+        }
+
+        switch (intent.action) {
+            case 'stop':
+                agent.cancel();
+                player.stopHorizontalMotion();
+                log('   → 停止');
+                break;
+            case 'go':
+            case 'approach':
+                agent.setGoal({
+                    position: intent.position!,
+                    tolerance: 4,
+                    label: text,
+                } as Goal);
+                break;
+            case 'revise':
+                agent.reviseGoal({ position: intent.position! });
+                log('   → 修正目标');
+                break;
+            case 'turn':
+                player.setScriptedYaw((pose.yaw + intent.yawDelta!) as number);
+                log('   → 转向');
+                break;
+            case 'run':
+                agent.config.walkSpeed = intent.pace === 'run' ? 9 : 5;
+                log(`   → ${intent.pace === 'run' ? '快跑' : '慢走'}`);
+                break;
+            case 'fly':
+                player.setFlightMode(!!intent.fly);
+                log(`   → ${intent.fly ? '起飞' : '降落'}`);
+                break;
+        }
+    }
+
+    input?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            handleCommand(input.value);
+            input.value = '';
+        }
+    });
+
+    // 快捷按钮
+    document.querySelectorAll<HTMLButtonElement>('[data-cmd]').forEach((btn) => {
+        btn.addEventListener('click', () => handleCommand(btn.dataset.cmd!));
+    });
+
+    log('就绪。输入「去3号风机」「往前走20米」「往左一点」「停」试试。');
+    (window as any).__agent = { agent, player, adapter };
+}
+
+main().catch((e) => {
+    console.error(e);
+    log('启动失败：' + (e instanceof Error ? e.message : String(e)));
+});
