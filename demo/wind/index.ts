@@ -75,10 +75,12 @@ async function main() {
         terrainProvider: undefined,
     });
     viewer.scene.globe.depthTestAgainstTerrain = true;
-    // 深色底，避免无影像时一片惨白
-    viewer.scene.globe.baseColor = Color.fromCssColorString('#1b2430');
-    viewer.scene.skyAtmosphere.show = false;
-    viewer.scene.fog.enabled = false;
+    // 广角视野：窄 FOV 会把近处地形裁出画面
+    (viewer.camera.frustum as any).fov = CMath.toRadians(90);
+    viewer.resolutionScale = Math.min(window.devicePixelRatio || 1, 1.5);
+    // 深色底，与巡界原版一致
+    viewer.scene.globe.baseColor = Color.fromCssColorString('#0d141b');
+    viewer.clock.shouldAnimate = true;
 
     // —— 地形瓦片 ——
     const tileset = await Cesium3DTileset.fromUrl(`${ASSET_BASE}${farm.assets.mountain.tilesetUrl}`);
@@ -155,8 +157,12 @@ async function main() {
     await player.init({
         viewer,
         initPos: spawn,
-        minCamDistance: 120,
-        maxCamDistance: 600,
+        // 注意：相机距离会乘以 playerModelConfig.scale（0.01），
+        // 所以这里写的是「厘米」。15000 → 150m。
+        // 与巡界 demo 一致：50/300 会乘 scale(0.01) → 0.5m / 3m。
+        // 配合 fov 90° 和手动拖拽旋转，这是原版验证过的观感。
+        minCamDistance: 50,
+        maxCamDistance: 300,
         camLookAtHeightRatio: 0.7,
         enableSpringCamera: true,
         springCameraTime: 0.07,
@@ -164,6 +170,9 @@ async function main() {
         playerModelConfig: playerModel,
         staticCollider: [gltfCollider],
     });
+    // 相机俯仰与巡界原版一致（70°），配合 fov 90° 是验证过的观感。
+    // 若在陡坡上被射线避障压近，可用滚轮/拖拽自行调整。
+    (player as any).setEnableZoom(true);
     player.setPlayerSpeed(500);
     player.setPlayerFlySpeed(3000);
 
