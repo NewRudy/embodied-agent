@@ -109,7 +109,11 @@ export interface AgentConfig {
     /** 卡住判定：位移低于 stuckDistance 持续 stuckSeconds 秒即判失败。 */
     stuckDistance: number;
     stuckSeconds: number;
-    /** 默认目标超时（秒）。 */
+    /**
+     * 默认目标超时（秒）。
+     * 必须容得下最长路径：420 米 / 步行 5m/s ≈ 84 秒，留足余量。
+     * 超时只是兜底，真正的「卡住」由 stuckSeconds 检测。
+     */
     defaultTimeout: number;
     /** 前方探测距离（米）。 */
     probeDistance: number;
@@ -131,7 +135,7 @@ export const DEFAULT_CONFIG: AgentConfig = Object.freeze({
     turnRate: Math.PI,          // 180°/s
     stuckDistance: 0.15,
     stuckSeconds: 2.5,
-    defaultTimeout: 90,
+    defaultTimeout: 600,
     probeDistance: 2.5,
     maxStepDown: 4,
     boundsRadius: 3000,

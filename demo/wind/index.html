@@ -59,6 +59,16 @@
             transition: background .15s;
         }
         .chips button:hover { background: rgba(78,168,255,.18); border-color: rgba(78,168,255,.4); }
+        .chips button.primary {
+            background: rgba(78,168,255,.22);
+            border-color: rgba(78,168,255,.55);
+            font-weight: 600;
+        }
+        .chips button:disabled { opacity: .55; cursor: default; }
+        #demoNote {
+            font-size: 11px; color: var(--accent);
+            min-height: 16px; margin-bottom: 8px;
+        }
 
         #cmd {
             width: 100%; padding: 9px 11px;
@@ -97,7 +107,9 @@
         <h1>具身智能体 · 目标驱动漫游</h1>
         <div class="sub">说一个目标，人物自己走过去；走到一半可以改。</div>
         <div id="readout">状态 idle</div>
+        <div id="demoNote"></div>
         <div class="chips">
+            <button id="demoBtn" class="primary">▶ 自动演示</button>
             <button data-cmd="去3号风机">去 3 号风机</button>
             <button data-cmd="去运维点">回运维点</button>
             <button data-cmd="往前走20米">往前走 20 米</button>

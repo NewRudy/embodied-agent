@@ -234,6 +234,17 @@ async function main() {
     // —— 输入处理 ——
     const input = document.getElementById('cmd') as HTMLInputElement | null;
 
+    /**
+     * 速度档位：走 / 跑。
+     * 注意 playerController 拒绝 >12 m/s，runSpeed 必须留在这个上限内。
+     */
+    const baseWalkSpeed = agent.config.walkSpeed;
+    const baseRunSpeed = agent.config.runSpeed;
+    let pace: 'walk' | 'run' = 'walk';
+    function applySpeed() {
+        agent.config.walkSpeed = pace === 'run' ? baseRunSpeed : baseWalkSpeed;
+    }
+
     function handleCommand(text: string) {
         if (!text.trim()) return;
         log(`🗣 ${text}`);
@@ -274,8 +285,9 @@ async function main() {
                 log('   → 转向');
                 break;
             case 'run':
-                agent.config.walkSpeed = intent.pace === 'run' ? 9 : 5;
-                log(`   → ${intent.pace === 'run' ? '快跑' : '慢走'}`);
+                pace = intent.pace === 'run' ? 'run' : 'walk';
+                applySpeed();
+                log(`   → ${pace === 'run' ? '快跑' : '慢走'}`);
                 break;
             case 'fly':
                 player.setFlightMode(!!intent.fly);
@@ -296,8 +308,91 @@ async function main() {
         btn.addEventListener('click', () => handleCommand(btn.dataset.cmd!));
     });
 
-    log('就绪。输入「去3号风机」「往前走20米」「往左一点」「停」试试。');
-    (window as any).__agent = { agent, player, adapter };
+    // —— 自动演示 ——
+    // 按顺序执行一组指令，每一步等「到达」或超时再走下一步。
+    // 目的：让人在 1 分钟内看到完整行为（长距离、修正、变速、到达、返回），
+    // 而不是手动敲一条条指令。
+    interface DemoStep {
+        cmd: string;
+        /** 等到什么条件再进入下一步。 */
+        wait: 'arrived' | 'seconds';
+        seconds?: number;
+        /** 步骤说明，显示在 HUD 上。 */
+        note: string;
+    }
+
+    /**
+     * 演示脚本：按顺序执行，每步等到条件满足再走下一步。
+     *
+     * 关键约束（实测得出，别改回去）：
+     * - 不能用倍速。playerController 拒绝 >12 m/s，且 >10 m/s 时物理跟不上会打滑触发 STUCK。
+     * - 所以演示用正常 5 m/s 步行，靠「选一个 100 米内的目标」把时长压到 20 秒左右。
+     * - 3 号风机离运维点 420 米，步行要 84 秒，不适合做演示目标；
+     *   改用「往前走 60 米」这类短目标，同样能展示目标驱动、修正、变速、到达。
+     */
+    const DEMO_SCRIPT: DemoStep[] = [
+        { cmd: '往前走60米', wait: 'seconds', seconds: 3, note: '目标驱动：给它一个点，它自己走过去' },
+        { cmd: '往左一点', wait: 'seconds', seconds: 3, note: '中途修正 —— 注意没有停下重算' },
+        { cmd: '跑起来', wait: 'seconds', seconds: 2, note: '变速 —— 同一目标继续' },
+        { cmd: '__wait_arrive__', wait: 'arrived', note: '减速、到达、自动停住' },
+        { cmd: '去运维点', wait: 'seconds', seconds: 3, note: '新目标抢占旧目标' },
+        { cmd: '停', wait: 'seconds', seconds: 2, note: '停止 —— 清空目标' },
+    ];
+
+    let demoRunning = false;
+
+    async function runDemo() {
+        if (demoRunning) return;
+        demoRunning = true;
+        const btn = document.getElementById('demoBtn') as HTMLButtonElement | null;
+        const banner = document.getElementById('demoNote');
+        if (btn) { btn.disabled = true; btn.textContent = '演示中…'; }
+
+        // 倍速这条路走不通：playerController.setWorldMovement 拒绝 >12 m/s，
+        // 而超过 ~10 m/s 时物理跟不上，人物原地打滑会被 STUCK 反射判失败。
+        // 所以演示不用倍速，改用正常的 5 m/s 步行，靠「缩短距离」来控制时长。
+        log('=== 自动演示开始 ===');
+
+        const waitFor = (predicate: () => boolean, timeoutMs: number) =>
+            new Promise<void>((resolve) => {
+                const t0 = performance.now();
+                const tick = () => {
+                    if (predicate() || performance.now() - t0 > timeoutMs) resolve();
+                    else requestAnimationFrame(tick);
+                };
+                tick();
+            });
+
+        for (const step of DEMO_SCRIPT) {
+            if (banner) banner.textContent = step.note;
+
+            if (step.cmd === '__wait_arrive__') {
+                // 等到到达或失败；60 米步行约 15 秒，留 60 秒余量
+                await waitFor(() => agent.currentState !== 'active', 60_000);
+                continue;
+            }
+
+            handleCommand(step.cmd);
+
+            if (step.wait === 'arrived') {
+                await waitFor(() => agent.currentState !== 'active', 120_000);
+            } else {
+                await waitFor(() => false, (step.seconds ?? 2) * 1000);
+            }
+        }
+
+        pace = 'walk';
+        applySpeed();
+        demoRunning = false;
+        if (btn) { btn.disabled = false; btn.textContent = '▶ 自动演示'; }
+        if (banner) banner.textContent = '演示结束';
+        log('=== 自动演示结束 ===');
+    }
+
+    document.getElementById('demoBtn')?.addEventListener('click', () => runDemo());
+
+    log('就绪。输入「去3号风机」「往前走20米」「往左一点」「停」试试，或点「自动演示」。');
+    (window as any).__agent = { agent, player, adapter, runDemo, handleCommand };
 }
 
 main().catch((e) => {
