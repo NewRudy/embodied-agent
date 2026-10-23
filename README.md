@@ -41,7 +41,7 @@ npm run voice        # 语音服务（不配置 ASR 也能起，只是麦克风�
 npm run dev          # 演示页面 http://localhost:5180/demo/wind/index.html
 ```
 
-启用语音只需两步：
+启用语音只需两步（`.env` 由 `npm run voice` 自动加载，Node 24 内置）：
 
 ```bash
 cp .env.example .env      # 填 DOUBAO_ASR_RESOURCE_ID + DOUBAO_ASR_API_KEY
@@ -389,8 +389,7 @@ ASR 几乎总把「3 号」识别成「三号」，而场景里的 ID 是阿拉�
 
 **未验证**：
 
-- **真实豆包 ASR 未跑过** —— 目前用假上游验证协议链路，需要真实凭据才能证明
-- **真实麦克风** —— 需要人在浏览器里说话，无法自动化
+- **真实麦克风** —— 真实 ASR 已用合成语音验证通过（见 ACCEPTANCE L9），但「人对着麦克风说话」这一步未做
 - **长距离完整到达** —— 3 号风机距出发点 420 米，步行需 84 秒
 - **复杂地形悬崖反射** —— 演示场景为缓坡，无法触发 `NO_GROUND_AHEAD`
 

@@ -36,7 +36,7 @@
     "dev": "vite --config vite.config.ts",
     "build": "vite build --config vite.config.ts",
     "build:lib": "tsup",
-    "voice": "node server/index.ts",
+    "voice": "node --env-file-if-exists=.env server/index.ts",
     "voice:check": "node -e \"import('./server/asr.ts').then(m=>console.log(m.voiceConfigured()?'ASR 已配置':'ASR 未配置'))\"",
     "check": "npm run typecheck && npm test"
   }
