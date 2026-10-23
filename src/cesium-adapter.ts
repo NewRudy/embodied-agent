@@ -23,6 +23,14 @@ export interface PlayerLike {
     setScriptedYaw(yaw: number | null): void;
     setFlightMode(enabled: boolean): void;
     getGroundClearanceMeters(): number;
+    /**
+     * 同步「按键轴」。
+     *
+     * 这个包用 setWorldMovement 驱动位移，但 playerController 的动画选择
+     * （AnimationSystem.setAnimationByPressed）只看键盘按键状态。
+     * 不同步的话，人物会一直播 idle —— 像滑行的雕像，不像在走。
+     */
+    setInput?(input: { moveX?: number; moveY?: number; shift?: boolean }): void;
     viewer: { scene: { globe: { getHeight: (c: Cartesian3) => number | undefined } } };
 }
 
@@ -138,21 +146,47 @@ export class CesiumSceneAdapter implements SceneAdapter {
     }
 }
 
+/** 每个 player 上一帧是否由智能体接管。用于「只在边沿交接」判断。 */
+const wasEngaged = new WeakMap<PlayerLike, boolean>();
+
 /**
  * 把智能体的输出写回 playerController。每帧调用一次。
+ *
+ * 三件事：
+ *   1. setWorldMovement —— 决定位移
+ *   2. setInput        —— 决定动画（AnimationSystem 只读按键轴，不看 worldMovement）
+ *   3. 交接           —— 没有活动目标时把控制权还给键鼠
+ *
+ * 缺了第 2 步，人物会「滑行」：位移在动，但动画恒为 idle。
+ * 缺了第 3 步，WASD 会被清零的 worldMovement 吃掉，手动控制失效。
  */
 export function applyOutput(player: PlayerLike, out: AgentOutput): void {
-    if (out.movement.speedMetersPerSecond <= 0) {
-        player.setWorldMovement({ east: 0, north: 0, up: 0, run: false, speedMetersPerSecond: 0 });
-    } else {
-        player.setWorldMovement({
-            east: out.movement.east,
-            north: out.movement.north,
-            up: out.movement.up,
-            run: out.movement.run,
-            speedMetersPerSecond: out.movement.speedMetersPerSecond,
-        });
+    const engaged = out.state === 'active';
+    const prevEngaged = wasEngaged.get(player) ?? false;
+    wasEngaged.set(player, engaged);
+
+    if (!engaged) {
+        // 交还控制权：worldMovement 非 null 会覆盖键鼠方向，必须置空。
+        player.setWorldMovement(null);
+        // 合成的摇杆轴只在「刚交接」这一帧清一次。
+        // 每帧都清会把用户的手柄/摇杆输入也一起抹掉。
+        if (prevEngaged) player.setInput?.({ moveX: 0, moveY: 0 });
+        player.setScriptedYaw(null);
+        return;
     }
+
+    const moving = out.movement.speedMetersPerSecond > 0;
+    player.setWorldMovement({
+        east: out.movement.east,
+        north: out.movement.north,
+        up: out.movement.up,
+        run: out.movement.run,
+        speedMetersPerSecond: out.movement.speedMetersPerSecond,
+    });
+
+    // 本包的运动永远是「朝目标前进」，所以前进轴恒为 1。
+    // 不同步的话按键状态恒为 false，AnimationSystem 会一直播 idle。
+    player.setInput?.({ moveX: 0, moveY: moving ? 1 : 0, shift: moving && out.movement.run });
     player.setScriptedYaw(out.yaw);
 }
 

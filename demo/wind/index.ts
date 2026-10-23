@@ -225,9 +225,10 @@ async function main() {
         const readout = document.getElementById('readout');
         if (readout) {
             const d = out.distance;
+            const anim = (player as any).animation?.stateKey ?? '?';
             readout.textContent = d == null
-                ? `状态 ${out.state}`
-                : `状态 ${out.state} · 距目标 ${d.toFixed(1)} m · 速度 ${out.movement.speedMetersPerSecond.toFixed(1)} m/s`;
+                ? `状态 ${out.state} · 动画 ${anim}`
+                : `状态 ${out.state} · 距目标 ${d.toFixed(1)} m · 速度 ${out.movement.speedMetersPerSecond.toFixed(1)} m/s · 动画 ${anim}`;
         }
     });
 
@@ -362,6 +363,10 @@ async function main() {
                 };
                 tick();
             });
+
+        // 出生点在运维点上方 3 米，靠重力落地约需 1 秒；
+        // 若在落地前下指令，前几秒人物是在空中「走」，看起来像飘。
+        await waitFor(() => (player as any).playerIsOnGround, 15_000);
 
         for (const step of DEMO_SCRIPT) {
             if (banner) banner.textContent = step.note;
