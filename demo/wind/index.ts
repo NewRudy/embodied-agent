@@ -17,7 +17,8 @@ import type { ColliderSource } from 'cesium-player-controller';
 
 import { EmbodiedAgent } from '../../src/agent.ts';
 import { parseIntent } from '../../src/intent.ts';
-import { CesiumSceneAdapter, EnuFrame, applyOutput, type PlayerLike } from '../../src/cesium-adapter.ts';
+import { CesiumSceneAdapter, EnuFrame, type PlayerLike } from '../../src/cesium-adapter.ts';
+import { applyOutput } from '../../src/body.ts';
 import { RealtimeVoice, isImmediatePause } from '../../src/voice/realtime-voice.ts';
 import { SpeechOutput } from '../../src/voice/speech-output.ts';
 import type { Goal, Vec3 } from '../../src/types.ts';
@@ -59,7 +60,8 @@ async function main() {
     const origin = Cartesian3.fromDegrees(
         farm.origin.lon, farm.origin.lat, farm.origin.heightM,
     );
-    const enuFrame = new EnuFrame(origin);
+    // 显式传 Cesium：本包不在加载时 import cesium，避免不用 Cesium 的人也被迫打包它
+    const enuFrame = new EnuFrame(origin, { Cartesian3, Matrix4, Transforms });
     const enuToEcef = (o: FarmOffset) => enuFrame.toEcef({ east: o.east, north: o.north, up: o.up });
 
     const viewer = new Viewer('cesiumContainer', {

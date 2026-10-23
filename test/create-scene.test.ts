@@ -18,7 +18,7 @@ function fakeScene(start: Vec3 = { east: 0, north: 0, up: 0 }) {
         resolveReference: (text: string) => (text.includes('风机') ? { east: 100, north: 0, up: 0 } : null),
     };
     /** 把人物往目标推进一点，模拟物理。 */
-    function advance(dt: number, speed: number) {
+    function advance(_dt: number, _speed: number) {
         const goal = (adapter as unknown as { _goal?: Vec3 })._goal;
         void goal;
         return { pose, advance };

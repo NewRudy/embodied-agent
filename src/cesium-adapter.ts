@@ -2,35 +2,32 @@
 //
 // 这是「包」和「具体场景」之间唯一的接缝。
 // 使用者只需要：一个 playerController 实例 + 一个坐标基准点。
+//
+// 注意：本文件依赖 cesium，所以**不在主入口里**导出。
+// 不用 Cesium 的人引入本包时，不应该被迫加载 4MB 的 Cesium。
+// 引入方式：import { EnuFrame } from 'embodied-agent/cesium'
 
-import { Cartesian3, Matrix4, Transforms } from 'cesium';
-import type { EmbodiedAgent, AgentOutput, Pose, SceneAdapter, Vec3 } from './index.ts';
+import type { Cartesian3, Matrix4 } from 'cesium';
+import type { Pose, SceneAdapter, Vec3 } from './types.ts';
+import type { EmbodiedAgent } from './agent.ts';
+import { applyOutput, type BodyLike } from './body.ts';
+
+export { applyOutput };
+export type { BodyLike } from './body.ts';
 
 /**
  * playerController 里本包用到的部分。
  * 用结构类型而不是 import 具体类，避免把 cesium-player-controller 变成硬依赖。
  */
-export interface PlayerLike {
+export interface PlayerLike extends BodyLike {
     position?: Cartesian3;
     posEcef: Cartesian3;
     isFlying: boolean;
     playerIsOnGround: boolean;
     getPlayerHeading?: () => number;
-    setWorldMovement(input: {
-        east: number; north: number; up?: number;
-        run?: boolean; speedMetersPerSecond?: number; maxTravelMeters?: number;
-    } | null): void;
     setScriptedYaw(yaw: number | null): void;
     setFlightMode(enabled: boolean): void;
     getGroundClearanceMeters(): number;
-    /**
-     * 同步「按键轴」。
-     *
-     * 这个包用 setWorldMovement 驱动位移，但 playerController 的动画选择
-     * （AnimationSystem.setAnimationByPressed）只看键盘按键状态。
-     * 不同步的话，人物会一直播 idle —— 像滑行的雕像，不像在走。
-     */
-    setInput?(input: { moveX?: number; moveY?: number; shift?: boolean }): void;
     viewer: { scene: { globe: { getHeight: (c: Cartesian3) => number | undefined } } };
 }
 
@@ -39,30 +36,35 @@ export interface PlayerLike {
  *
  * 场景里的场站偏移量（如 farm.json 的 offset）都是相对这个原点的 ENU 米，
  * 所以智能体内部一律用 ENU 计算，只在写回 playerController 时转成世界方向。
+ *
+ * 构造函数接收 Cesium 命名空间（注入而非 import），这样：
+ *   - 本模块可以做纯类型依赖，不在加载时拉入 4MB Cesium
+ *   - 单元测试可以传假的 Cesium
  */
 export class EnuFrame {
-    private readonly origin: Cartesian3;
     private readonly matrix: Matrix4;
     private readonly inverse: Matrix4;
+    private readonly C: CesiumApi;
 
-    constructor(originEcef: Cartesian3) {
-        this.origin = originEcef;
-        this.matrix = Transforms.eastNorthUpToFixedFrame(originEcef);
-        this.inverse = Matrix4.inverse(this.matrix, new Matrix4());
+    constructor(originEcef: Cartesian3, cesium?: CesiumApi) {
+        const C = cesium ?? getCesium();
+        this.C = C;
+        this.matrix = C.Transforms.eastNorthUpToFixedFrame(originEcef);
+        this.inverse = C.Matrix4.inverse(this.matrix, new C.Matrix4());
     }
 
     /** ECEF → 相对原点的 ENU（米）。 */
     toEnu(ecef: Cartesian3): Vec3 {
-        const local = Matrix4.multiplyByPoint(this.inverse, ecef, new Cartesian3());
+        const local = this.C.Matrix4.multiplyByPoint(this.inverse, ecef, new this.C.Cartesian3());
         return { east: local.x, north: local.y, up: local.z };
     }
 
     /** 相对原点的 ENU（米）→ ECEF。 */
     toEcef(enu: Vec3): Cartesian3 {
-        return Matrix4.multiplyByPoint(
+        return this.C.Matrix4.multiplyByPoint(
             this.matrix,
-            new Cartesian3(enu.east, enu.north, enu.up),
-            new Cartesian3(),
+            new this.C.Cartesian3(enu.east, enu.north, enu.up),
+            new this.C.Cartesian3(),
         );
     }
 
@@ -81,6 +83,34 @@ export class EnuFrame {
             return null;
         }
     }
+}
+
+/** 本包用到的 Cesium 成员（注入用）。 */
+export interface CesiumApi {
+    Cartesian3: typeof import('cesium').Cartesian3;
+    Matrix4: typeof import('cesium').Matrix4;
+    Transforms: typeof import('cesium').Transforms;
+}
+
+let cachedCesium: CesiumApi | null = null;
+
+/**
+ * 取 Cesium 命名空间。
+ *
+ * 优先用全局的 Cesium（页面用 script 标签引入的场景），否则报错并提示。
+ * 不做静态 import —— 那会让不用 Cesium 的人也被迫打包它。
+ */
+function getCesium(): CesiumApi {
+    if (cachedCesium) return cachedCesium;
+    const globalCesium = (globalThis as { Cesium?: CesiumApi }).Cesium;
+    if (globalCesium?.Cartesian3 && globalCesium.Matrix4 && globalCesium.Transforms) {
+        cachedCesium = globalCesium;
+        return globalCesium;
+    }
+    throw new Error(
+        'EnuFrame 需要 Cesium。请显式传入：new EnuFrame(origin, Cesium)，' +
+        '或把 Cesium 挂到全局（window.Cesium）。',
+    );
 }
 
 export interface CesiumAdapterOptions {
@@ -154,9 +184,6 @@ export class CesiumSceneAdapter implements SceneAdapter {
     }
 }
 
-/** 每个 player 上一帧是否由智能体接管。用于「只在边沿交接」判断。 */
-const wasEngaged = new WeakMap<PlayerLike, boolean>();
-
 const CN_DIGITS: Record<string, number> = {
     零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4,
     五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10,
@@ -202,47 +229,6 @@ function chineseToNumber(s: string): string | null {
     if (ones == null || ones === 10) return null;
     return String(tens * 10 + ones);                         // 二十三
 }
-/**
- * 把智能体的输出写回 playerController。每帧调用一次。
- *
- * 三件事：
- *   1. setWorldMovement —— 决定位移
- *   2. setInput        —— 决定动画（AnimationSystem 只读按键轴，不看 worldMovement）
- *   3. 交接           —— 没有活动目标时把控制权还给键鼠
- *
- * 缺了第 2 步，人物会「滑行」：位移在动，但动画恒为 idle。
- * 缺了第 3 步，WASD 会被清零的 worldMovement 吃掉，手动控制失效。
- */
-export function applyOutput(player: PlayerLike, out: AgentOutput): void {
-    const engaged = out.state === 'active';
-    const prevEngaged = wasEngaged.get(player) ?? false;
-    wasEngaged.set(player, engaged);
-
-    if (!engaged) {
-        // 交还控制权：worldMovement 非 null 会覆盖键鼠方向，必须置空。
-        player.setWorldMovement(null);
-        // 合成的摇杆轴只在「刚交接」这一帧清一次。
-        // 每帧都清会把用户的手柄/摇杆输入也一起抹掉。
-        if (prevEngaged) player.setInput?.({ moveX: 0, moveY: 0 });
-        player.setScriptedYaw(null);
-        return;
-    }
-
-    const moving = out.movement.speedMetersPerSecond > 0;
-    player.setWorldMovement({
-        east: out.movement.east,
-        north: out.movement.north,
-        up: out.movement.up,
-        run: out.movement.run,
-        speedMetersPerSecond: out.movement.speedMetersPerSecond,
-    });
-
-    // 本包的运动永远是「朝目标前进」，所以前进轴恒为 1。
-    // 不同步的话按键状态恒为 false，AnimationSystem 会一直播 idle。
-    player.setInput?.({ moveX: 0, moveY: moving ? 1 : 0, shift: moving && out.movement.run });
-    player.setScriptedYaw(out.yaw);
-}
-
 /**
  * 便捷驱动：把智能体挂到 Cesium 的 postRender 上，自动每帧解算并施加。
  * 返回卸载函数。

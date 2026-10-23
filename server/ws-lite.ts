@@ -240,7 +240,7 @@ export function connectWebSocket(url: string, options: ConnectOptions = {}): Web
             return;
         }
         state = WS_OPEN;
-        sock.setNoDelay(true);
+        (sock as Duplex & { setNoDelay?: (v: boolean) => void }).setNoDelay?.(true);
         sock.on('data', (chunk: Buffer) => {
             let frames: Frame[];
             try {
@@ -350,7 +350,7 @@ export function acceptUpgrade(socket: Duplex, head: Buffer, request: IncomingMes
         '',
         '',
     ].join('\r\n'));
-    socket.setNoDelay?.(true);
+    (socket as Duplex & { setNoDelay?: (v: boolean) => void }).setNoDelay?.(true);
 
     let state = WS_OPEN;
     const decoder = new FrameDecoder();

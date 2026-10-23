@@ -8,11 +8,35 @@
 
 ---
 
-## 三十秒上手
+## 别人怎么引入这个包
+
+```bash
+npm install embodied-agent
+```
+
+包分成三个入口，按需引入 —— **不用 Cesium 的人不会被强制打包 4MB Cesium**：
+
+```ts
+import { createEmbodiedScene } from 'embodied-agent';          // 核心，零依赖
+import { EnuFrame } from 'embodied-agent/cesium';              // Cesium 适配器
+import { attachVoiceStream } from 'embodied-agent/server';     // 语音服务
+```
+
+最小可运行示例（纯 Node，无浏览器、无 Cesium）：
+
+```bash
+node examples/minimal/index.ts
+```
+
+它做完了整件事：说「去三号风机」→ 解析意图 → 算路径 → 每帧出运动量 →
+144 米后自动减速停在目标 4 米内。
+
+### 在本仓库里开发
 
 ```bash
 npm install          # 只有 demo 需要依赖；核心零依赖
-npm test             # 79 项测试，纯 Node，秒级
+npm run check        # 类型检查 + 79 项测试
+npm run build:lib    # 构建可发布的包
 npm run voice        # 语音服务（不配置 ASR 也能起，只是麦克风不可用）
 npm run dev          # 演示页面 http://localhost:5180/demo/wind/index.html
 ```
@@ -108,6 +132,21 @@ applyOutput(player, agent.update(dt));
 只写位移不写按键轴，人物会「滑行」——位移在动，动画恒为 `idle`。
 `applyOutput()` 把两件事一起做了，还负责在无目标时交还键鼠控制。
 
+### 引擎无关
+
+`BodyLike` 只有三个方法，任何 3D 引擎都能实现：
+
+```ts
+interface BodyLike {
+    setWorldMovement(m: MovementCommand | null): void;
+    setScriptedYaw?(yaw: number | null): void;
+    setInput?(input: { moveX?: number; moveY?: number; shift?: boolean }): void;
+}
+```
+
+`setInput` 是给 `cesium-player-controller` 专用的（它的动画只读按键轴）。
+其他引擎不需要实现它。
+
 ### SceneAdapter —— 唯一的接缝
 
 ```ts
@@ -117,6 +156,14 @@ interface SceneAdapter {
     resolveReference(text: string): Vec3 | null;              // 「3号风机」在哪
 }
 ```
+
+`EnuFrame` 需要 Cesium，但**不在加载时 import** —— 构造时显式传入：
+
+```ts
+new EnuFrame(originEcef, { Cartesian3, Matrix4, Transforms });
+```
+
+不传就报清晰的错误，而不是 `undefined is not a function`。
 
 三个方法。实现这三个，就能接到任意 3D 场景。
 Cesium 的现成实现见 `src/cesium-adapter.ts`。
@@ -246,10 +293,13 @@ ASR 几乎总把「3 号」识别成「三号」，而场景里的 ID 是阿拉�
 
 ```
 src/
+  index.ts            主入口（不加载 Cesium）
+  cesium.ts           Cesium 子入口
   types.ts            类型与默认配置
   steering.ts         运动解算（seek / arrive / turn）
   agent.ts            目标生命周期 + 反射
   intent.ts           意图解析（规则）
+  body.ts             把运动量施加到角色（引擎无关）
   cesium-adapter.ts   Cesium 适配器 + 数字归一
   create-scene.ts     一站式装配
   voice/
@@ -258,12 +308,14 @@ src/
     playback-guard.ts 回声过滤 + 唤醒词
     speech-output.ts  TTS 播报
 server/
-  index.ts            语音服务入口
+  lib.ts              可复用出口（import 这个）
+  index.ts            可执行入口（npm run voice）
   voice-stream.ts     WebSocket 代理
   asr.ts              豆包 Seed ASR 协议
   ws-lite.ts          最小 WebSocket 实现
 public/voice/
   pcm-capture.js      AudioWorklet（16k 重采样分帧）
+examples/minimal/     最小可运行示例（纯 Node）
 test/                 79 项测试
 demo/wind/            风机场景演示
 ```

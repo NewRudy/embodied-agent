@@ -78,13 +78,15 @@ test('编码：客户端帧带掩码位', () => {
 test('端到端：真实 HTTP 服务 + 双向收发', async () => {
     const server = createServer();
     const received: string[] = [];
-    let serverSocket: Awaited<ReturnType<typeof acceptUpgrade>> | null = null;
+    // 用 holder 而不是 let：赋值发生在回调里，TS 的控制流分析会把 let 收窄成 null
+    const holder: { socket: ReturnType<typeof acceptUpgrade> | null } = { socket: null };
 
     server.on('upgrade', (req, socket, head) => {
-        serverSocket = acceptUpgrade(socket, head, req);
+        const serverSocket = acceptUpgrade(socket, head, req);
+        holder.socket = serverSocket;
         serverSocket.onmessage = (data, binary) => {
             received.push(binary ? `<bin:${data.length}>` : data.toString());
-            serverSocket!.send(`echo:${binary ? data.length : data.toString()}`);
+            serverSocket.send(`echo:${binary ? data.length : data.toString()}`);
         };
     });
 
@@ -111,7 +113,7 @@ test('端到端：真实 HTTP 服务 + 双向收发', async () => {
 
     client.close();
     await new Promise(r => setTimeout(r, 50));
-    serverSocket?.terminate();
+    holder.socket?.terminate();
     server.close();
 });
 

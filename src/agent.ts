@@ -15,8 +15,6 @@ import {
     type FailReason,
     type Goal,
     type GoalState,
-    type MovementCommand,
-    type Pose,
     type SceneAdapter,
     type Vec3,
 } from './types.ts';

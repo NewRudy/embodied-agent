@@ -23,7 +23,7 @@
 import type { Goal, Vec3 } from './types.ts';
 import { EmbodiedAgent } from './agent.ts';
 import { parseIntent } from './intent.ts';
-import { applyOutput, type PlayerLike } from './cesium-adapter.ts';
+import { applyOutput, releaseBody, type BodyLike } from './body.ts';
 import { RealtimeVoice, type VoiceState } from './voice/realtime-voice.ts';
 import { SpeechOutput } from './voice/speech-output.ts';
 import type { VoiceInterruption } from './voice/protocol.ts';
@@ -31,8 +31,8 @@ import type { VoiceInterruption } from './voice/protocol.ts';
 export interface EmbodiedSceneOptions {
     /** 场景适配器（Cesium 用户通常传 CesiumSceneAdapter）。 */
     adapter: import('./types.ts').SceneAdapter;
-    /** 直接传 playerController；与 adapter 二选一即可，两者都传则用 player 施加运动。 */
-    player?: PlayerLike;
+    /** 角色的「身体」。Cesium 用户传 playerController 实例。不传则只算目标不出运动。 */
+    player?: BodyLike;
     /** 智能体参数。 */
     agent?: { origin?: Vec3; config?: Partial<import('./types.ts').AgentConfig> };
     /** 语音配置。不传则只有文字输入。 */
@@ -243,15 +243,7 @@ export function createEmbodiedScene(options: EmbodiedSceneOptions): EmbodiedScen
             voice?.stop();
             speech?.cancel();
             agent.release();
-            if (options.player) applyOutput(options.player, {
-                movement: { east: 0, north: 0, up: 0, run: false, speedMetersPerSecond: 0 },
-                yaw: null,
-                state: 'idle',
-                justArrived: false,
-                failure: null,
-                goal: null,
-                distance: null,
-            });
+            if (options.player) releaseBody(options.player);
         },
     };
 }

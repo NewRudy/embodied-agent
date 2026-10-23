@@ -1,17 +1,43 @@
 {
   "name": "embodied-agent",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "description": "具身智能体：目标驱动的数字人漫游层。说一句话，人物自己走过去；语音全双工。",
-  "scripts": {
-    "test": "node --test \"test/*.test.ts\"",
-    "dev": "vite --config vite.config.ts",
-    "build": "vite build --config vite.config.ts",
-    "voice": "node server/index.ts",
-    "voice:check": "node -e \"import('./server/asr.ts').then(m=>console.log(m.voiceConfigured()?'ASR 已配置':'ASR 未配置'))\""
-  },
+  "keywords": ["embodied", "agent", "cesium", "digital-human", "voice", "asr"],
+  "license": "MIT",
   "engines": {
     "node": ">=22.6"
+  },
+  "files": ["dist", "README.md", "ACCEPTANCE.md"],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./cesium": {
+      "types": "./dist/cesium.d.ts",
+      "import": "./dist/cesium.js"
+    },
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "import": "./dist/server/index.js"
+    },
+    "./voice/pcm-capture.js": "./dist/public/voice/pcm-capture.js"
+  },
+  "peerDependencies": {
+    "cesium": ">=1.110"
+  },
+  "peerDependenciesMeta": {
+    "cesium": { "optional": true }
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.ts\"",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "dev": "vite --config vite.config.ts",
+    "build": "vite build --config vite.config.ts",
+    "build:lib": "tsup",
+    "voice": "node server/index.ts",
+    "voice:check": "node -e \"import('./server/asr.ts').then(m=>console.log(m.voiceConfigured()?'ASR 已配置':'ASR 未配置'))\"",
+    "check": "npm run typecheck && npm test"
   }
 }

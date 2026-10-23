@@ -9,13 +9,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { EmbodiedAgent } from '../src/agent.ts';
-import { arriveSpeed, headingTo, horizontalDistance, steerToward, turnToward, wrapPi } from '../src/steering.ts';
-import { DEFAULT_CONFIG, type Pose, type SceneAdapter, type Vec3 } from '../src/types.ts';
+import { arriveSpeed, headingTo, horizontalDistance, turnToward, wrapPi } from '../src/steering.ts';
+import { DEFAULT_CONFIG, type Pose, type SceneAdapter } from '../src/types.ts';
 
 const DT = 1 / 60;
 
 /** 平地场景：地面高度恒定，无参照物。 */
-function flatScene(start: Partial<Pose> = {}, ground = 0): SceneAdapter {
+export function flatScene(start: Partial<Pose> = {}, ground = 0): SceneAdapter {
     const pose: Pose = { east: 0, north: 0, up: ground, yaw: 0, flying: false, onGround: true, ...start };
     return {
         getPose: () => ({ ...pose }),
