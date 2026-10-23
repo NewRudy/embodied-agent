@@ -259,10 +259,18 @@ async function main() {
     // —— 语音（全双工）——
     // 链路移植自巡界：麦克风 → AudioWorklet(16k) → WebSocket → 后端豆包 ASR。
     // 凭据只在后端；浏览器只发原始 PCM。
+    //
+    // 访问密钥：语音服务现在**默认拒绝无密钥连接**（空 key 会让任何人烧掉你的 ASR 额度）。
+    // 本地开发时在语音服务那边设 VOICE_ACCESS_KEY，然后打开页面时带上同一个 key：
+    //   http://localhost:5180/demo/wind/index.html?key=你的key
+    // 这不是安全边界 —— 浏览器里的 key 对任何打开页面的人都可见。
+    // 真正防滥用靠服务端限流 + Origin 白名单 + 网关鉴权。
+    const VOICE_KEY = new URLSearchParams(location.search).get('key') ?? '';
     const VOICE_URL = (() => {
         const url = new URL('/voice/stream', location.href);
         url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
         url.port = '5181'; // 语音服务独立端口，与 vite 分开
+        if (VOICE_KEY) url.searchParams.set('key', VOICE_KEY);
         return url.toString();
     })();
 
@@ -318,12 +326,18 @@ async function main() {
 
     // 语音服务未配置时禁用麦克风，别让人点了才发现连不上
     void fetch(VOICE_URL.replace(/^ws/, 'http').replace('/voice/stream', '/voice/health'))
-        .then(r => r.ok ? r.json() as Promise<{ voiceConfigured?: boolean }> : null)
+        .then(r => r.ok ? r.json() as Promise<{ voiceConfigured?: boolean; requiresKey?: boolean }> : null)
         .then(status => {
-            if (status && status.voiceConfigured === false && micBtn) {
+            if (!status) return;
+            if (status.voiceConfigured === false && micBtn) {
                 micBtn.disabled = true;
                 micBtn.title = '语音未配置（缺少 ASR 凭据），可用文字操控';
                 log('语音未配置，仅文字可用。要启用：在语音服务上设置 DOUBAO_ASR_* 环境变量。');
+                return;
+            }
+            // 服务端要求 key 但页面 URL 没带 → 现在就说清楚，别等点了麦克风才 401
+            if (status.requiresKey && !VOICE_KEY) {
+                log('⚠️ 语音服务要求访问密钥：请用 ?key=你的key 打开本页（key 见 .env 的 VOICE_ACCESS_KEY）。');
             }
         })
         .catch(() => {

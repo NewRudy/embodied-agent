@@ -35,7 +35,7 @@ node examples/minimal/index.ts
 
 ```bash
 npm install          # 只有 demo 需要依赖；核心零依赖
-npm run check        # 类型检查 + 142 项测试
+npm run check        # 类型检查 + 168 项测试
 npm run build:lib    # 构建可发布的包
 npm run voice        # 语音服务（不配置 ASR 也能起，只是麦克风不可用）
 npm run dev          # 演示页面 http://localhost:5180/demo/wind/index.html
@@ -47,6 +47,19 @@ npm run dev          # 演示页面 http://localhost:5180/demo/wind/index.html
 cp .env.example .env      # 填 DOUBAO_ASR_RESOURCE_ID + DOUBAO_ASR_API_KEY
 npm run voice
 ```
+
+**语音流默认要求访问密钥**（`VOICE_ACCESS_KEY`）。没配 key 时语音服务会拒绝所有连接，
+浏览器侧表现为「连上了又立刻断开」。配置后打开页面时带上同一个 key：
+
+```
+http://localhost:5180/demo/wind/index.html?key=你的key
+```
+
+生成一个：`node -e "console.log(require('crypto').randomBytes(16).toString('hex'))"`
+
+为什么默认必填：每条语音连接都对应一条按分钟计费的 ASR 上游会话。之前「空 key = 不鉴权」
+等于知道地址就能烧钱。只想本地随便试试的话，可以在 `.env` 里设 `VOICE_ALLOW_ANONYMOUS=1`
+显式接受这个风险 —— **不要用于公网**。
 
 **不配置 ASR 也能用**：文字指令、按钮、自动演示全部正常，只是麦克风按钮置灰。
 这是刻意设计——凭据缺失不应该让整个场景不可用。
@@ -359,7 +372,7 @@ ASR 几乎总把「3 号」识别成「三号」，而场景里的 ID 是阿拉�
 2. Node 24 自带的 WebSocket 不支持自定义 header，而豆包必须带鉴权头
 
 `server/ws-lite.ts` 只实现协议层（握手、帧编解码、分片、ping/pong），
-不实现重连和心跳定时器——上层自己管。10 项测试覆盖帧边界和真实握手。
+不实现重连和心跳定时器——上层自己管。13 项测试覆盖帧边界、真实握手、帧/消息长度上限。
 
 **为什么用目标不用命令**
 
@@ -378,7 +391,7 @@ ASR 几乎总把「3 号」识别成「三号」，而场景里的 ID 是阿拉�
 
 | 层 | 内容 | 状态 |
 |---|---|---|
-| 单元测试 | 142 项：运动收敛、减速曲线、反射、意图、置信度、模型校验、多步队列、回声过滤、帧编解码、数字归一 | ✅ 通过 |
+| 单元测试 | 168 项：运动收敛、减速曲线、反射、意图、置信度、模型校验、多步队列、回声过滤、帧编解码、数字归一 | ✅ 通过 |
 | 构建 | `vite build` 成功 | ✅ 通过 |
 | 浏览器 | 目标驱动、中途修正、变速、到达、停止、动画跟随 | ✅ 通过 |
 | 浏览器 | 语音服务 → 转写 → 意图 → 动作（假 ASR 上游） | ✅ 通过 |
@@ -439,8 +452,9 @@ server/
 public/voice/
   pcm-capture.js      AudioWorklet（16k 重采样分帧）
 examples/minimal/     最小可运行示例（纯 Node）
-test/                 142 项测试
+test/                 168 项测试
 test/live/            打真实模型的冒烟测试（不进 npm test）
+.github/workflows/    CI：Node 22.9 + 24 上跑 typecheck + 全部测试
 demo/wind/            风机场景演示
 demo/sandbox/         空白场景（无 Cesium、无资产）
 ```

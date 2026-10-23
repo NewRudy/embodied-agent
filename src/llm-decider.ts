@@ -23,10 +23,27 @@ export interface LlmDeciderOptions {
     timeoutMs?: number;
     /** 注入 fetch（测试用）。 */
     fetchImpl?: typeof fetch;
+    /**
+     * 滑动窗口内最多调用几次，默认 30 次/分钟。
+     *
+     * 为什么需要：语音持续识别时，规则层听不懂的每句话都会触发一次模型调用。
+     * 用户开着麦克风聊十分钟，可能几十次。没有上限的话，一个说个不停的人
+     * （或者一段被误触发的环境音）就能把额度烧掉。
+     */
+    maxCallsPerMinute?: number;
+    /** 连续失败多少次后熔断，默认 5。熔断期间 available() 返回 false，走纯规则层。 */
+    failureThreshold?: number;
+    /** 熔断持续毫秒，默认 60_000。 */
+    cooldownMs?: number;
 }
 
 const ALLOWED_ACTIONS = ['go', 'stop', 'revise', 'turn', 'run', 'fly'] as const;
 type AllowedAction = typeof ALLOWED_ACTIONS[number];
+
+/** 单调时钟。浏览器和 Node 都有 performance.now()。 */
+function now(): number {
+    return typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
 
 function buildSystemPrompt(references: Array<{ name: string; description?: string }>): string {
     const refList = references.length
@@ -187,6 +204,13 @@ export class LlmDecider implements IntentDecider {
     readonly isAsync = true;
     private readonly options: Required<Omit<LlmDeciderOptions, 'fetchImpl'>> & { fetchImpl: typeof fetch };
 
+    /** 最近一分钟的调用时间戳，用于限流。 */
+    private callTimes: number[] = [];
+    /** 连续失败次数。 */
+    private consecutiveFailures = 0;
+    /** 熔断截止时间（performance.now 基准）。 */
+    private blockedUntil = 0;
+
     constructor(options: LlmDeciderOptions = {}) {
         const baseUrl = options.baseUrl
             ?? (typeof process !== 'undefined' ? process.env.EMBODIED_LLM_BASE_URL : undefined)
@@ -206,19 +230,52 @@ export class LlmDecider implements IntentDecider {
             // 存成变量再单独调用会丢 this 绑定，报 "Illegal invocation"。
             // Node 里不报，所以单元测试发现不了 —— 这是浏览器验收才抓到的。
             fetchImpl: options.fetchImpl ?? ((input, init) => globalThis.fetch(input, init)),
+            maxCallsPerMinute: options.maxCallsPerMinute ?? 30,
+            failureThreshold: options.failureThreshold ?? 5,
+            cooldownMs: options.cooldownMs ?? 60_000,
         };
         this.name = `llm:${this.options.model}`;
+    }
+
+    /** 当前是否处于熔断状态。 */
+    get circuitOpen(): boolean {
+        return now() < this.blockedUntil;
     }
 
     available(): boolean {
         // 不能只判断 apiKey：浏览器场景常用「同源代理」，key 只是占位。
         // 真正的前提是有 fetch 可用。
-        return typeof this.options.fetchImpl === 'function'
+        const hasEndpoint = typeof this.options.fetchImpl === 'function'
             && (Boolean(this.options.apiKey) || this.options.baseUrl.startsWith('/'));
+        return hasEndpoint && !this.circuitOpen;
+    }
+
+    /** 检查并记录一次调用配额。超限返回 false。 */
+    private tryConsumeQuota(): boolean {
+        const t = now();
+        // 丢掉一分钟之前的记录
+        this.callTimes = this.callTimes.filter(x => t - x < 60_000);
+        if (this.callTimes.length >= this.options.maxCallsPerMinute) return false;
+        this.callTimes.push(t);
+        return true;
+    }
+
+    private recordFailure(): void {
+        this.consecutiveFailures++;
+        if (this.consecutiveFailures >= this.options.failureThreshold) {
+            this.blockedUntil = now() + this.options.cooldownMs;
+            this.consecutiveFailures = 0;
+        }
+    }
+
+    private recordSuccess(): void {
+        this.consecutiveFailures = 0;
     }
 
     async decide(text: string, ctx: ParseContext): Promise<Intent | null> {
         if (!this.available()) return null;
+        // 限流：超了就当「没把握」，让上层继续降级，不抛异常
+        if (!this.tryConsumeQuota()) return null;
 
         const references = ctx.references ?? [];
         const messages = [
@@ -266,7 +323,13 @@ export class LlmDecider implements IntentDecider {
             const parsed = extractJson(content);
             if (!parsed) throw new Error('LLM_JSON');
             const intent = validateLlmIntent(parsed, ctx, this.options.model);
+            this.recordSuccess();
             return intent ? { ...intent, raw: text } : null;
+        } catch (error) {
+            // 任何失败都计入熔断计数。连续失败到阈值后直接停用一段时间，
+            // 避免模型服务挂了之后每次说话都白等 4 秒超时。
+            this.recordFailure();
+            throw error;
         } finally {
             clearTimeout(timer);
         }

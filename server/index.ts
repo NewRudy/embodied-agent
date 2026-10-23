@@ -31,6 +31,13 @@ const stream = attachVoiceStream(server);
 server.listen(port, () => {
     console.log(`语音服务已启动 http://localhost:${port}`);
     console.log(`  语音流路径：${stream.path}`);
+    if (!process.env.VOICE_ACCESS_KEY && process.env.VOICE_ALLOW_ANONYMOUS !== '1') {
+        console.log('  ⚠️  未配置 VOICE_ACCESS_KEY —— 所有语音连接都会被拒绝（401）。');
+        console.log('      本地调试：在 .env 里设 VOICE_ACCESS_KEY=随便一串，然后打开页面加 ?key=同一串');
+        console.log('      或者设 VOICE_ALLOW_ANONYMOUS=1（仅限本地，会烧 ASR 额度）');
+    } else if (!process.env.VOICE_ACCESS_KEY) {
+        console.log('  ⚠️  已允许匿名语音访问（VOICE_ALLOW_ANONYMOUS=1），不要用于公网。');
+    }
     if (!stream.configured) {
         console.log('  ⚠️  ASR 未配置，语音流会返回 VOICE_NOT_CONFIGURED。文字操控不受影响。');
         console.log('      需要设置 DOUBAO_ASR_RESOURCE_ID 与 DOUBAO_ASR_API_KEY（或 APP_KEY+ACCESS_KEY）。');

@@ -270,3 +270,72 @@ test('模型决策器自报异步，快路径不会误调它', () => {
     const d = new LlmDecider({ apiKey: 'k' });
     assert.equal(d.isAsync, true);
 });
+
+// ==================== 成本控制：限流 + 熔断 ====================
+//
+// 语音持续识别时，规则层听不懂的每句话都会触发一次模型调用。
+// 没有上限的话，一个开着麦克风说个不停的人（或者一段被误触发的环境音）
+// 就能把额度烧光。这两组测试钉的就是这个上限。
+
+test('超过每分钟调用上限后不再发请求', async () => {
+    let calls = 0;
+    const counting = (async () => {
+        calls++;
+        return { ok: true, status: 200, json: async () => chatReply(JSON.stringify({ action: 'stop', confidence: 1 })) };
+    }) as unknown as typeof fetch;
+
+    const d = new LlmDecider({ apiKey: 'k', fetchImpl: counting, maxCallsPerMinute: 3 });
+    for (let i = 0; i < 5; i++) await d.decide('停', ctx());
+    assert.equal(calls, 3, '第 4、5 次应该被本地限流拦下，不发请求');
+});
+
+test('限流时返回 null（当没把握），不抛异常', async () => {
+    const d = new LlmDecider({ apiKey: 'k', fetchImpl: fakeFetch(chatReply('{"action":"stop","confidence":1}')), maxCallsPerMinute: 1 });
+    assert.ok(await d.decide('停', ctx()));
+    assert.equal(await d.decide('停', ctx()), null, '限流不能变成错误，只能降级');
+});
+
+test('连续失败到阈值 → 熔断，available() 变 false', async () => {
+    const failing = (async () => { throw new Error('ECONNREFUSED'); }) as unknown as typeof fetch;
+    const d = new LlmDecider({ apiKey: 'k', fetchImpl: failing, failureThreshold: 3 });
+
+    for (let i = 0; i < 3; i++) {
+        await assert.rejects(() => d.decide('去A点', ctx()));
+    }
+    assert.equal(d.circuitOpen, true);
+    assert.equal(d.available(), false, '熔断期间决策链应跳过它，走纯规则层');
+    assert.equal(await d.decide('去A点', ctx()), null);
+});
+
+test('熔断后冷却期满自动恢复', async () => {
+    const failing = (async () => { throw new Error('boom'); }) as unknown as typeof fetch;
+    const d = new LlmDecider({ apiKey: 'k', fetchImpl: failing, failureThreshold: 1, cooldownMs: 50 });
+    await assert.rejects(() => d.decide('去A点', ctx()));
+    assert.equal(d.available(), false);
+    await new Promise(r => setTimeout(r, 80));
+    assert.equal(d.available(), true, '冷却结束应自动恢复');
+});
+
+test('成功一次就清空失败计数', async () => {
+    let n = 0;
+    const flaky = (async () => {
+        n++;
+        if (n <= 2) throw new Error('flaky');
+        return { ok: true, status: 200, json: async () => chatReply('{"action":"stop","confidence":1}') };
+    }) as unknown as typeof fetch;
+
+    const d = new LlmDecider({ apiKey: 'k', fetchImpl: flaky, failureThreshold: 3 });
+    await assert.rejects(() => d.decide('停', ctx()));
+    await assert.rejects(() => d.decide('停', ctx()));
+    assert.ok(await d.decide('停', ctx())); // 第 3 次成功
+    // 计数归零 → 再失败两次不该熔断
+    await assert.rejects(() => d.decide('停', ctx())).catch(() => {});
+    assert.equal(d.circuitOpen, false, '连续失败被成功打断后不应熔断');
+});
+
+test('HTTP 5xx 计入失败（不能把服务端故障当成模型答错）', async () => {
+    const d = new LlmDecider({ apiKey: 'k', fetchImpl: fakeFetch({}, 503), failureThreshold: 2 });
+    await assert.rejects(() => d.decide('去A点', ctx()), /LLM_HTTP_503/);
+    await assert.rejects(() => d.decide('去A点', ctx()), /LLM_HTTP_503/);
+    assert.equal(d.circuitOpen, true);
+});

@@ -18,6 +18,59 @@ import type { Duplex } from 'node:stream';
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
+/**
+ * 单帧负载上限（16 MB）。
+ *
+ * 为什么必须有：`FrameDecoder` 会一直攒字节直到够一帧为止。
+ * 攻击者只要发一个声明长度 1GB 的帧头，进程就会持续 `Buffer.concat` 直到 OOM ——
+ * 原来只有 `> Number.MAX_SAFE_INTEGER`（9PB）的检查，形同虚设。
+ *
+ * 16MB 的依据：本包唯一的 WebSocket 用途是语音（PCM 约 3KB/帧）
+ * 和 ASR 文本结果（几百字节）。任何合法帧都远小于这个量级。
+ */
+const MAX_FRAME_PAYLOAD = 16 * 1024 * 1024;
+
+/**
+ * 单条消息（含分片）的总上限。
+ *
+ * 单帧上限拦不住「发 1000 个 16MB 分片」的攻击 —— 分片数组会一直涨。
+ * 这里给整条消息也设一个上限。
+ */
+const MAX_MESSAGE_BYTES = 32 * 1024 * 1024;
+
+/** 分片累积器：记录已收字节数，超限就报错而不是继续攒。 */
+class FragmentBuffer {
+    private parts: Buffer[] = [];
+    private bytes = 0;
+    opcode: number | null = null;
+
+    start(opcode: number, first: Buffer): void {
+        this.opcode = opcode;
+        this.parts = [first];
+        this.bytes = first.length;
+    }
+
+    append(chunk: Buffer): void {
+        this.bytes += chunk.length;
+        if (this.bytes > MAX_MESSAGE_BYTES) throw new Error('WS_MESSAGE_TOO_LARGE');
+        this.parts.push(chunk);
+    }
+
+    take(): { opcode: number; payload: Buffer } | null {
+        const opcode = this.opcode;
+        if (opcode == null) return null;
+        const payload = Buffer.concat(this.parts);
+        this.reset();
+        return { opcode, payload };
+    }
+
+    reset(): void {
+        this.opcode = null;
+        this.parts = [];
+        this.bytes = 0;
+    }
+}
+
 export const OPCODE = {
     continuation: 0x0,
     text: 0x1,
@@ -109,10 +162,12 @@ export class FrameDecoder {
         } else if (len === 127) {
             if (buf.length < offset + 8) return null;
             const big = buf.readBigUInt64BE(offset);
-            if (big > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('WS_FRAME_TOO_LARGE');
+            if (big > BigInt(MAX_FRAME_PAYLOAD)) throw new Error('WS_FRAME_TOO_LARGE');
             len = Number(big);
             offset += 8;
         }
+        // 126 分支（16 位长度）最大 65535，天然低于上限，不用再查。
+        // 但 127 分支的 len 可能来自恶意头，上面已拦。
 
         let key: Buffer | null = null;
         if (masked) {
@@ -179,8 +234,7 @@ export function connectWebSocket(url: string, options: ConnectOptions = {}): Web
     let handshakeStatus: number | undefined;
     let buffered = 0;
     const decoder = new FrameDecoder();
-    let fragmentOpcode: number | null = null;
-    let fragments: Buffer[] = [];
+    const message = new FragmentBuffer();
 
     const api: WebSocketLite = {
         get readyState() { return state; },
@@ -257,10 +311,16 @@ export function connectWebSocket(url: string, options: ConnectOptions = {}): Web
             state = WS_CLOSED;
             api.onclose?.();
         });
+        // 先触发 onopen，再派发 head 里的帧。
+        //
+        // 顺序不能反：服务端完全可能在写出 101 的同一个包里就把第一帧发出来
+        // （例如「握手成功但立刻报错并关闭」）。那些字节会落进 head。
+        // 如果先派发帧，调用方就会在还没收到 open 的情况下先收到 message/close，
+        // 状态机直接错乱 —— 实测表现为「连接明明成功了却报连不上」。
+        api.onopen?.();
         if (head?.length) {
             for (const frame of decoder.push(head)) handleFrame(frame);
         }
-        api.onopen?.();
     });
 
     req.on('response', (res: IncomingMessage) => {
@@ -294,21 +354,26 @@ export function connectWebSocket(url: string, options: ConnectOptions = {}): Web
                 socket?.end();
                 api.onclose?.();
                 return;
-            case OPCODE.continuation:
-                if (fragmentOpcode == null) return;
-                fragments.push(frame.payload);
+            case OPCODE.continuation: {
+                if (message.opcode == null) return;
+                try {
+                    message.append(frame.payload);
+                } catch (e) {
+                    api.onerror?.(e instanceof Error ? e : new Error('WS_MESSAGE_TOO_LARGE'));
+                    api.terminate();
+                    return;
+                }
                 if (frame.fin) {
-                    const whole = Buffer.concat(fragments);
-                    const op = fragmentOpcode;
-                    fragments = [];
-                    fragmentOpcode = null;
-                    if (op === OPCODE.text || op === OPCODE.binary) api.onmessage?.(whole);
+                    const whole = message.take();
+                    if (whole && (whole.opcode === OPCODE.text || whole.opcode === OPCODE.binary)) {
+                        api.onmessage?.(whole.payload);
+                    }
                 }
                 return;
+            }
             default: {
                 if (!frame.fin) {
-                    fragmentOpcode = frame.opcode;
-                    fragments = [frame.payload];
+                    message.start(frame.opcode, frame.payload);
                     return;
                 }
                 api.onmessage?.(frame.payload);
@@ -354,8 +419,7 @@ export function acceptUpgrade(socket: Duplex, head: Buffer, request: IncomingMes
 
     let state = WS_OPEN;
     const decoder = new FrameDecoder();
-    let fragmentOpcode: number | null = null;
-    let fragments: Buffer[] = [];
+    const message = new FragmentBuffer();
 
     const api: ServerWebSocket = {
         get readyState() { return state; },
@@ -409,21 +473,26 @@ export function acceptUpgrade(socket: Duplex, head: Buffer, request: IncomingMes
                 socket.end(encodeFrame(OPCODE.close, frame.payload.subarray(0, 2), false));
                 api.onclose?.();
                 return;
-            case OPCODE.continuation:
-                if (fragmentOpcode == null) return;
-                fragments.push(frame.payload);
+            case OPCODE.continuation: {
+                if (message.opcode == null) return;
+                try {
+                    message.append(frame.payload);
+                } catch (e) {
+                    api.onerror?.(e instanceof Error ? e : new Error('WS_MESSAGE_TOO_LARGE'));
+                    api.terminate();
+                    return;
+                }
                 if (frame.fin) {
-                    const whole = Buffer.concat(fragments);
-                    const op = fragmentOpcode;
-                    fragments = [];
-                    fragmentOpcode = null;
-                    if (op === OPCODE.text || op === OPCODE.binary) api.onmessage?.(whole, op === OPCODE.binary);
+                    const whole = message.take();
+                    if (whole && (whole.opcode === OPCODE.text || whole.opcode === OPCODE.binary)) {
+                        api.onmessage?.(whole.payload, whole.opcode === OPCODE.binary);
+                    }
                 }
                 return;
+            }
             default:
                 if (!frame.fin) {
-                    fragmentOpcode = frame.opcode;
-                    fragments = [frame.payload];
+                    message.start(frame.opcode, frame.payload);
                     return;
                 }
                 api.onmessage?.(frame.payload, frame.opcode === OPCODE.binary);

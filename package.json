@@ -6,7 +6,7 @@
   "keywords": ["embodied", "agent", "cesium", "digital-human", "voice", "asr"],
   "license": "MIT",
   "engines": {
-    "node": ">=22.6"
+    "node": ">=22.9"
   },
   "files": ["dist", "README.md", "ACCEPTANCE.md"],
   "exports": {

@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: typecheck + test (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 22.9 是本包 engines 的下限（--env-file-if-exists 从 22.9 起才有）。
+        # 24 是开发时实际用的版本，两者都要过，避免只在本机版本上「看起来能跑」。
+        node: ['22.9', '24']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      # 不装 Cesium：本包的测试与 Cesium 无关，安装体积巨大。
+      # cesium 是 optional peerDependency，省略即可验证「引入即用」。
+      - run: npm install --no-audit --no-fund
+      - run: npm run check

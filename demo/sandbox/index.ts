@@ -68,11 +68,17 @@ const readout = document.getElementById('readout');
 
 // 模型意图层：走 vite 代理（网关不支持 CORS 预检，浏览器直连会失败）。
 // 环境变量在构建期注入 —— 浏览器端没有 process.env。
+//
+// ⚠️ `apiKey: 'proxy'` 只是**本地 demo** 的占位符，不是可用的密钥。
+// 它成立的前提是：请求打到同源 `/llm`，由 vite.config.ts 的 proxy 转发到本机网关，
+// 网关自身不做鉴权。**不要把这段抄到生产环境**——那等于把模型端点裸奔在公网上。
+// 生产环境的正确做法是：自己的后端代理这个端点，后端持有真实 key 并做鉴权 + 限流，
+// 浏览器只请求自己的同源路径。
 const LLM = (import.meta.env.EMBODIED_LLM_ENABLED === '1' || location.search.includes('llm=1'))
     ? {
         baseUrl: '/llm',
         model: import.meta.env.EMBODIED_LLM_MODEL || 'workbuddy-ai/deepseek-v4.1-flash',
-        apiKey: 'proxy',
+        apiKey: 'proxy', // 占位符，仅本地 demo；生产必须换成后端代理
         timeoutMs: 8000,
     }
     : false;

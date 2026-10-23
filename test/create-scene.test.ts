@@ -255,3 +255,50 @@ test('非移动类步骤被拒绝', async () => {
     assert.equal(scene.tasks.isRunning, false);
     assert.ok(logs.some(l => l.includes('只支持移动类步骤')), logs.join('\n'));
 });
+
+// ==================== 帧回调容错 ====================
+//
+// tick() 跑在调用方的渲染循环里。任何异常如果漏出去，整个场景就停了。
+// Cesium 在 tileset 加载完成之前，getPose() 抛异常或返回垃圾值是常态，
+// 所以「跳过这一帧、继续下一帧」必须是默认行为。
+
+test('场景适配器抛异常时跳过本帧，不中断循环', () => {
+    let boom = false;
+    const pose: Pose = { east: 0, north: 0, up: 0, yaw: 0, flying: false, onGround: true };
+    const adapter: SceneAdapter = {
+        getPose: () => {
+            if (boom) throw new Error('tileset 还没加载完');
+            return { ...pose };
+        },
+        groundHeightAt: () => 0,
+        resolveReference: (t: string) => (t.includes('风机') ? { east: 100, north: 0, up: 0 } : null),
+    };
+    const { player } = fakePlayer();
+    const logs: string[] = [];
+    const scene = createEmbodiedScene({ adapter, player: player as never, log: l => logs.push(l) });
+
+    scene.handleCommand('去3号风机');
+    scene.tick(0.016);
+
+    boom = true;
+    assert.doesNotThrow(() => scene.tick(0.016), '单帧异常不能漏出渲染循环');
+
+    boom = false;
+    assert.doesNotThrow(() => scene.tick(0.016), '恢复后应继续正常工作');
+    assert.ok(logs.some(l => l.includes('tick 异常')), logs.join('\n'));
+});
+
+test('同一个异常连续出现只报一次', () => {
+    const adapter: SceneAdapter = {
+        getPose: () => { throw new Error('同一个错'); },
+        groundHeightAt: () => 0,
+        resolveReference: () => null,
+    };
+    const logs: string[] = [];
+    const scene = createEmbodiedScene({ adapter, log: l => logs.push(l) });
+    scene.handleCommand('去3号风机');
+
+    for (let i = 0; i < 10; i++) scene.tick(0.016);
+    const warnings = logs.filter(l => l.includes('tick 异常'));
+    assert.equal(warnings.length, 1, '每帧刷屏会把控制台冲掉');
+});

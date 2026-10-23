@@ -38,10 +38,17 @@ export {
 export type { Frame, ServerWebSocket, WebSocketLite } from './ws-lite.ts';
 
 /** 只读配置状态，不含任何凭据 —— 供前端判断要不要显示麦克风按钮。 */
-export function voiceStatus(): { voiceConfigured: boolean; streamPath: string } {
+export function voiceStatus(): {
+    voiceConfigured: boolean;
+    streamPath: string;
+    /** 语音流是否要求 ?key=（前端据此提示用户，而不是连上才报错）。 */
+    requiresKey: boolean;
+} {
     const configured = Boolean(
         process.env.DOUBAO_ASR_RESOURCE_ID
         && (process.env.DOUBAO_ASR_API_KEY || (process.env.DOUBAO_ASR_APP_KEY && process.env.DOUBAO_ASR_ACCESS_KEY)),
     );
-    return { voiceConfigured: configured, streamPath: '/voice/stream' };
+    // 注意只回布尔，绝不回 key 本身 —— 这个端点不鉴权。
+    const requiresKey = Boolean(process.env.VOICE_ACCESS_KEY);
+    return { voiceConfigured: configured, streamPath: '/voice/stream', requiresKey };
 }

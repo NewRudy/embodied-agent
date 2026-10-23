@@ -198,8 +198,21 @@ export function createEmbodiedScene(options: EmbodiedSceneOptions): EmbodiedScen
     /** 并发保护：新指令作废旧指令，防止慢模型返回时覆盖用户最新意图。 */
     let commandSeq = 0;
 
-    function buildContext(): ParseContext {
-        const pose = adapter.getPose();
+    /**
+     * 构造解析上下文。适配器还没准备好时返回 null。
+     *
+     * 为什么不在外面 try：`getPose()` 抛异常时我们**不知道人物在哪**，
+     * 「往东走 20 米」这种指令就没有基准点了。正确的做法是明确告诉用户
+     * 「场景还没准备好」，而不是拿一个 (0,0) 去算，让人物跑到地图原点。
+     */
+    function buildContext(): ParseContext | null {
+        let pose;
+        try {
+            pose = adapter.getPose();
+        } catch (error) {
+            log(`⚠️ 场景尚未就绪，忽略本次指令：${error instanceof Error ? error.message : String(error)}`);
+            return null;
+        }
         return {
             pose: { east: pose.east, north: pose.north, yaw: pose.yaw },
             goal: agent.currentGoal,
@@ -257,6 +270,7 @@ export function createEmbodiedScene(options: EmbodiedSceneOptions): EmbodiedScen
         const steps: TaskStep[] = [];
         for (const part of parts) {
             const ctx = buildContext();
+            if (!ctx) return;
             let intent: Intent | null = null;
             try {
                 const slow = await decideWithChain(part, ctx, deciders);
@@ -332,6 +346,7 @@ export function createEmbodiedScene(options: EmbodiedSceneOptions): EmbodiedScen
         }
 
         const ctx = buildContext();
+        if (!ctx) return;
         const fast = decideFast(text, ctx, deciders);
         if (fast.done) {
             if (fast.trace.length > 1) log(`   · ${formatTrace(fast.trace)}`);
@@ -367,6 +382,7 @@ export function createEmbodiedScene(options: EmbodiedSceneOptions): EmbodiedScen
         }
 
         const ctx = buildContext();
+        if (!ctx) return;
         const fast = decideFast(text, ctx, deciders);
         if (fast.done) {
             if (fast.trace.length > 1) log(`   · ${formatTrace(fast.trace)}`);
@@ -429,30 +445,51 @@ export function createEmbodiedScene(options: EmbodiedSceneOptions): EmbodiedScen
         }
     }
 
+    /** 上一帧的异常信息，用于「同一个错只报一次」。 */
+    let lastTickError = '';
+
+    /**
+     * 每帧解算。
+     *
+     * **异常不能冒到调用方** —— 这个方法通常直接放在 requestAnimationFrame 里，
+     * 抛一次异常整个渲染循环就停了，用户看到的是「页面卡死」，日志里什么都没有。
+     *
+     * 具体防的是场景适配器：Cesium 场景在 tileset 加载完之前，getPose() 可能抛
+     * 或返回垃圾值。这时候正确的做法是跳过这一帧，而不是让整个场景死掉。
+     */
     function tick(dt: number) {
         if (disposed) return;
-        const out = agent.update(dt);
-        if (options.player) applyOutput(options.player, out);
+        try {
+            const out = agent.update(dt);
+            if (options.player) applyOutput(options.player, out);
 
-        // 队列推进必须在到达回调之前 —— 这样「到达并开始下一步」在同一帧内完成，
-        // 人物不会在两步之间停一帧。
-        taskQueue.notify(out.justArrived, out.failure);
+            // 队列推进必须在到达回调之前 —— 这样「到达并开始下一步」在同一帧内完成，
+            // 人物不会在两步之间停一帧。
+            taskQueue.notify(out.justArrived, out.failure);
 
-        // 到达/失败时说话
-        // 队列运行中由队列自己播报，这里不重复播
-        if (!taskQueue.isRunning) {
-            if (out.justArrived) {
-                const label = out.goal?.label ?? '目标';
-                log(`✅ 到达 ${label}`);
-                speech?.speak(`已到达${cleanLabel(label)}`);
+            // 到达/失败时说话
+            // 队列运行中由队列自己播报，这里不重复播
+            if (!taskQueue.isRunning) {
+                if (out.justArrived) {
+                    const label = out.goal?.label ?? '目标';
+                    log(`✅ 到达 ${label}`);
+                    speech?.speak(`已到达${cleanLabel(label)}`);
+                } else if (out.failure) {
+                    log(`⚠️ 失败：${out.failure}`);
+                    speech?.speak(failureText(out.failure));
+                }
             } else if (out.failure) {
-                log(`⚠️ 失败：${out.failure}`);
-                speech?.speak(failureText(out.failure));
+                log(`⚠️ 任务步失败：${out.failure}`);
             }
-        } else if (out.failure) {
-            log(`⚠️ 任务步失败：${out.failure}`);
+            emit(out);
+        } catch (error) {
+            // 连续报同一个错只打一次，避免每帧刷屏把控制台冲掉
+            const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+            if (message !== lastTickError) {
+                lastTickError = message;
+                log(`⚠️ tick 异常（已跳过本帧）：${message}`);
+            }
         }
-        emit(out);
     }
 
     let lastKey = '';
