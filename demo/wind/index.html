@@ -80,6 +80,28 @@
         }
         #cmd:focus { border-color: var(--accent); }
 
+        .row { display: flex; gap: 6px; align-items: stretch; }
+        .row #cmd { flex: 1; }
+        #mic {
+            flex: 0 0 auto; width: 40px;
+            display: grid; place-items: center;
+            background: rgba(255,255,255,.06);
+            border: 1px solid var(--border); border-radius: 8px;
+            color: var(--text); cursor: pointer; font-size: 15px;
+            transition: background .15s, border-color .15s, box-shadow .15s;
+        }
+        #mic:hover { background: rgba(78,168,255,.16); border-color: rgba(78,168,255,.4); }
+        #mic[data-state="connecting"] { border-color: var(--warn); color: var(--warn); }
+        #mic[data-state="listening"] {
+            background: rgba(70,196,138,.18); border-color: rgba(70,196,138,.6); color: var(--ok);
+        }
+        #mic[data-state="off"] { opacity: .8; }
+        #mic:disabled { opacity: .35; cursor: not-allowed; }
+        #transcript {
+            font-size: 11px; color: var(--accent); min-height: 15px;
+            margin-top: 6px; font-style: italic;
+        }
+
         #log {
             position: absolute; right: 16px; top: 16px;
             width: min(320px, calc(100vw - 32px));
@@ -117,7 +139,11 @@
             <button data-cmd="跑起来">跑起来</button>
             <button data-cmd="停">停</button>
         </div>
-        <input id="cmd" type="text" placeholder="输入指令后回车，例如「去 7 号风机」" autocomplete="off">
+        <div class="row">
+            <input id="cmd" type="text" placeholder="输入指令后回车，例如「去 7 号风机」" autocomplete="off">
+            <button id="mic" title="开启持续语音" aria-label="开启持续语音" data-state="off">🎤</button>
+        </div>
+        <div id="transcript"></div>
     </div>
 
     <script type="module" src="./index.ts"></script>

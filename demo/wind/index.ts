@@ -18,6 +18,8 @@ import type { ColliderSource } from 'cesium-player-controller';
 import { EmbodiedAgent } from '../../src/agent.ts';
 import { parseIntent } from '../../src/intent.ts';
 import { CesiumSceneAdapter, EnuFrame, applyOutput, type PlayerLike } from '../../src/cesium-adapter.ts';
+import { RealtimeVoice, isImmediatePause } from '../../src/voice/realtime-voice.ts';
+import { SpeechOutput } from '../../src/voice/speech-output.ts';
 import type { Goal, Vec3 } from '../../src/types.ts';
 
 // 资源从巡界仓库直接引用，避免复制大文件
@@ -213,13 +215,19 @@ async function main() {
         applyOutput(player as unknown as PlayerLike, out);
         player.update();
 
-        // 状态变化时写日志
+        // 状态变化时写日志 + 播报
         const key = `${out.state}:${out.failure ?? ''}`;
         if (key !== lastLoggedState) {
             lastLoggedState = key;
-            if (out.justArrived) log(`✅ 到达 ${out.goal?.label ?? ''}`);
-            else if (out.failure) log(`⚠️ 失败：${out.failure}`);
-            else if (out.state === 'active') log(`▶ 出发 → ${out.goal?.label ?? ''} (${(out.distance ?? 0).toFixed(0)}m)`);
+            if (out.justArrived) {
+                log(`✅ 到达 ${out.goal?.label ?? ''}`);
+                speech?.speak(`已到达${(out.goal?.label ?? '目标').replace(/^(?:去|到|走向)/, '')}`);
+            } else if (out.failure) {
+                log(`⚠️ 失败：${out.failure}`);
+                speech?.speak(failureText(out.failure));
+            } else if (out.state === 'active') {
+                log(`▶ 出发 → ${out.goal?.label ?? ''} (${(out.distance ?? 0).toFixed(0)}m)`);
+            }
         }
         // 距离读数
         const readout = document.getElementById('readout');
@@ -246,6 +254,84 @@ async function main() {
         agent.config.walkSpeed = pace === 'run' ? baseRunSpeed : baseWalkSpeed;
     }
 
+    // —— 语音（全双工）——
+    // 链路移植自巡界：麦克风 → AudioWorklet(16k) → WebSocket → 后端豆包 ASR。
+    // 凭据只在后端；浏览器只发原始 PCM。
+    const VOICE_URL = (() => {
+        const url = new URL('/voice/stream', location.href);
+        url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+        url.port = '5181'; // 语音服务独立端口，与 vite 分开
+        return url.toString();
+    })();
+
+    // 播报先建：语音需要它提供回声参考文本
+    const speech = new SpeechOutput({
+        onPlaybackGate: (active, text) => voice?.setPlayback(active, text),
+    });
+
+    const micBtn = document.getElementById('mic') as HTMLButtonElement | null;
+    const transcriptEl = document.getElementById('transcript');
+
+    const voice = new RealtimeVoice({
+        url: VOICE_URL,
+        workletUrl: '/voice/pcm-capture.js',
+        onState(state) {
+            if (micBtn) {
+                micBtn.dataset.state = state;
+                micBtn.textContent = state === 'listening' ? '⏹' : '🎤';
+                micBtn.title = state === 'listening' ? '结束持续语音' : '开启持续语音';
+                micBtn.setAttribute('aria-pressed', String(state !== 'off'));
+            }
+            if (state === 'connecting') log('🎧 正在连接麦克风和语音服务…');
+            else if (state === 'listening') log('🎧 持续语音已开启 · 说「停」可随时打断');
+            else if (transcriptEl) transcriptEl.textContent = '';
+        },
+        onPartial(text) {
+            if (transcriptEl) transcriptEl.textContent = text ? `「${text}」` : '';
+            // 临时转写里的「停」立刻生效，不等定稿
+            if (text && isImmediatePause(text)) {
+                speech.cancel();
+                handleCommand('停');
+            }
+        },
+        onInterrupt(event) {
+            speech.cancel();
+            if (event.reason === 'pause') {
+                handleCommand('停');
+                log('🎧 语音打断 → 停止');
+            } else {
+                log('🎧 语音打断播报');
+            }
+        },
+        onCommand(text) {
+            handleCommand(text);
+        },
+        onError(message) {
+            log(`⚠️ 语音：${message}`);
+            if (transcriptEl) transcriptEl.textContent = message;
+        },
+    });
+
+    micBtn?.addEventListener('click', () => { void voice.toggle(); });
+
+    // 语音服务未配置时禁用麦克风，别让人点了才发现连不上
+    void fetch(VOICE_URL.replace(/^ws/, 'http').replace('/voice/stream', '/voice/health'))
+        .then(r => r.ok ? r.json() as Promise<{ voiceConfigured?: boolean }> : null)
+        .then(status => {
+            if (status && status.voiceConfigured === false && micBtn) {
+                micBtn.disabled = true;
+                micBtn.title = '语音未配置（缺少 ASR 凭据），可用文字操控';
+                log('语音未配置，仅文字可用。要启用：在语音服务上设置 DOUBAO_ASR_* 环境变量。');
+            }
+        })
+        .catch(() => {
+            if (micBtn) {
+                micBtn.disabled = true;
+                micBtn.title = '语音服务未启动，可用文字操控';
+            }
+            log('语音服务未启动（npm run voice），仅文字可用。');
+        });
+
     function handleCommand(text: string) {
         if (!text.trim()) return;
         log(`🗣 ${text}`);
@@ -260,6 +346,7 @@ async function main() {
 
         if (!intent) {
             log('   → 没听懂');
+            speech.speak('没听懂，请再说一次');
             return;
         }
 
@@ -294,6 +381,16 @@ async function main() {
                 player.setFlightMode(!!intent.fly);
                 log(`   → ${intent.fly ? '起飞' : '降落'}`);
                 break;
+        }
+    }
+
+    function failureText(reason: string): string {
+        switch (reason) {
+            case 'STUCK': return '前面过不去，停下了';
+            case 'NO_GROUND_AHEAD': return '前方是陡坡，停下了';
+            case 'TIMEOUT': return '走太久了，先停下';
+            case 'OUT_OF_BOUNDS': return '超出活动范围了，停下了';
+            default: return '没法继续前进了';
         }
     }
 
@@ -397,7 +494,7 @@ async function main() {
     document.getElementById('demoBtn')?.addEventListener('click', () => runDemo());
 
     log('就绪。输入「去3号风机」「往前走20米」「往左一点」「停」试试，或点「自动演示」。');
-    (window as any).__agent = { agent, player, adapter, runDemo, handleCommand };
+    (window as any).__agent = { agent, player, adapter, runDemo, handleCommand, voice, speech };
 }
 
 main().catch((e) => {

@@ -1,5 +1,13 @@
 node_modules
 dist
-public
 .DS_Store
 *.log
+
+# .env 只放本地凭据，绝不提交
+.env
+.env.local
+
+# public/xunjie-assets 是指向巡界仓库的软链（大文件，不复制）
+# 但 public/voice 是本包自己的源码，必须提交
+public/*
+!public/voice

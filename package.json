@@ -3,10 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "具身智能体：目标驱动的数字人漫游层。不依赖 Cesium 的核心 + Cesium 适配器。",
+  "description": "具身智能体：目标驱动的数字人漫游层。说一句话，人物自己走过去；语音全双工。",
   "scripts": {
     "test": "node --test \"test/*.test.ts\"",
     "dev": "vite --config vite.config.ts",
-    "build": "vite build --config vite.config.ts"
+    "build": "vite build --config vite.config.ts",
+    "voice": "node server/index.ts",
+    "voice:check": "node -e \"import('./server/asr.ts').then(m=>console.log(m.voiceConfigured()?'ASR 已配置':'ASR 未配置'))\""
+  },
+  "engines": {
+    "node": ">=22.6"
   }
 }

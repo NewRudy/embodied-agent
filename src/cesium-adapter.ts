@@ -137,6 +137,14 @@ export class CesiumSceneAdapter implements SceneAdapter {
                 if (v) return v;
             }
         }
+        // ASR 几乎总把「3 号」识别成「三号」，而场景里的 ID 是阿拉伯数字。
+        // 不做这层归一，语音输入会一直「没听懂」，而文字输入却正常 —— 极难排查。
+        const normalized = normalizeNumerals(text);
+        if (normalized !== text) {
+            for (const key of keys) {
+                if (normalized.includes(key)) return this.references.get(key)!;
+            }
+        }
         return null;
     }
 
@@ -149,6 +157,51 @@ export class CesiumSceneAdapter implements SceneAdapter {
 /** 每个 player 上一帧是否由智能体接管。用于「只在边沿交接」判断。 */
 const wasEngaged = new WeakMap<PlayerLike, boolean>();
 
+const CN_DIGITS: Record<string, number> = {
+    零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4,
+    五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10,
+};
+
+/**
+ * 中文数字 → 阿拉伯数字。
+ *
+ * 为什么在适配层做而不是意图层：这是 ASR 的输入特征，不是场景语义。
+ * 文字输入「3号」、语音输入「三号」，两者应该解析到同一个参照物。
+ *
+ * 只在数字后面紧跟 ID 或单位时才转换（号/米/台/层…）。
+ * 不能无条件转换 ——「往左一点」的「一」是量词，转成「1点」就毁了。
+ */
+export function normalizeNumerals(text: string): string {
+    return text.replace(
+        /([零〇一二两三四五六七八九十]+)(?=号|米|公里|千米|台|座|层|楼|个|#)/g,
+        (match) => chineseToNumber(match) ?? match,
+    );
+}
+
+/** 中文数字 → 数字；无法解析返回 null。只支持 1-99。 */
+function chineseToNumber(s: string): string | null {
+    if (s.length === 1) {
+        const v = CN_DIGITS[s];
+        return v == null ? null : String(v);
+    }
+    if (s.startsWith('十')) {
+        const rest = s.slice(1);
+        if (rest.length !== 1) return null;
+        const unit = CN_DIGITS[rest];
+        return unit == null ? null : String(10 + unit);
+    }
+    const parts = s.split('十');
+    if (parts.length !== 2) return null;
+    const [tensPart, onesPart] = parts;
+    if (tensPart.length !== 1) return null;
+    const tens = CN_DIGITS[tensPart];
+    if (tens == null || tens === 10) return null;
+    if (onesPart === '') return String(tens * 10);          // 二十、三十
+    if (onesPart.length !== 1) return null;
+    const ones = CN_DIGITS[onesPart];
+    if (ones == null || ones === 10) return null;
+    return String(tens * 10 + ones);                         // 二十三
+}
 /**
  * 把智能体的输出写回 playerController。每帧调用一次。
  *
