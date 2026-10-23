@@ -47,7 +47,35 @@
 |---|---|
 | 长距离完整到达 | 3 号风机距出发点 420 米，步行需 84 秒，验收时长内未走完 |
 | 复杂地形悬崖反射 | 演示场景为缓坡，无法触发 `NO_GROUND_AHEAD` |
-| 「像不像活的」 | 主观判断，需要人看录屏 |
+
+## L3.5 动画跟随 · 通过（2026-10-23 补验）
+
+「不像活的，像滑行」的根因与修复。
+
+**根因**：`AnimationSystem.setAnimationByPressed()` 只读键盘按键轴
+（`input.fwd/bkd/lft/rgt`）。本包用 `setWorldMovement` 驱动位移，按键状态恒为 false，
+所以位移在动、动画恒为 `idle`。
+
+**修复**：`applyOutput()` 每帧同步按键轴 —— `setInput({ moveY: 1, shift: 跑步 })`。
+同时补上控制权交接：无活动目标时 `setWorldMovement(null)`，并在**状态边沿**清空
+合成的摇杆轴（每帧清会把手柄输入也抹掉）。
+
+| 检查 | 结果 | 证据 |
+|---|---|---|
+| 走动播 `walking` | ✅ | `stateKey: "walking"`，速度 5.0 m/s |
+| 跑步播 `running` | ✅ | `stateKey: "running"`，速度 9.0 m/s |
+| 到达后回 `idle` | ✅ | `state: arrived` → `stateKey: "idle"` |
+| 手控不被吃掉 | ✅ | 停止后注入摇杆 `moveY:1` → `walking`，`analogMoveY` 保持 1 |
+| 自动演示动画序列 | ✅ | `idle → walking → running → walking → running → idle` |
+
+截图：`/tmp/embodied-run.png`（跑步姿势，非滑行）。
+
+**踩过的坑**：前几次测试都显示「动画没变」，其实是**人物还没落地**。
+出生点在运维点上方 3 米，靠重力落地约需 10 秒（原版 demo 同样如此，
+对比 `/tmp/orig-2s.png` 与 `/tmp/orig-12s.png` 可证）。
+空中状态下 `playerIsOnGround = false`，`setAnimationByPressed()` 的地面分支根本不执行。
+**教训**：验证行为前先确认前置状态，不要看到「没反应」就改代码。
+
 
 ## L4 自动演示 · 通过
 

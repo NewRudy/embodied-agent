@@ -100,9 +100,13 @@ agent.setGoal({ position: { east: 300, north: 200, up: 0 }, tolerance: 4, label:
 
 // 每帧
 const out = agent.update(dt);
-player.setWorldMovement(out.movement);
-player.setScriptedYaw(out.yaw);
+applyOutput(player, out);   // 位移 + 动画 + 朝向，一次写回
 ```
+
+**别只写 `setWorldMovement`。** 位移和动画是两条独立通道：
+`setWorldMovement` 决定往哪走，`AnimationSystem` 决定播哪个动作，而后者只读按键轴。
+只写位移不写按键轴，人物会「滑行」——位移在动，动画恒为 `idle`。
+`applyOutput()` 把两件事一起做了。
 
 ### SceneAdapter —— 唯一的接缝
 
@@ -169,6 +173,8 @@ Cesium 的现成实现见 `src/cesium-adapter.ts`。
 **已知问题**：
 - 第三人称相机在陡坡上会被射线避障压到 0.5 米，可用滚轮拉远
 - 没有寻路/避障，只有直线 seek + 悬崖停止。遇到障碍物会卡住，由 `STUCK` 反射兜底
+- 出生点在运维点上方 3 米，靠重力落地约需 10 秒。**落地前下指令，人物会在空中「走」**，
+  自动演示已加了落地等待
 
 ---
 
