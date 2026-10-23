@@ -165,6 +165,48 @@ ASR 把「3 号」识别成「三号」，而参照物表是阿拉伯数字。
 `normalizeNumerals()` 在适配层归一，只在数字后跟 ID 或单位时生效。
 已加 8 项测试钉住，包括「往左一点」不被误转成「往左1点」。
 
+## L6 包化 · 通过（2026-10-23）
+
+目标：别人 `npm install` 之后，配几个环境变量就能在自己场景跑虚拟人。
+
+### 已验证
+
+| 检查 | 层级 | 结果 | 证据 |
+|---|---|---|---|
+| 类型检查 | 静态 | ✅ | `tsc --noEmit` 全项目无错 |
+| 库构建 | 构建 | ✅ | `tsup` 产出 ESM + .d.ts，`external: cesium` |
+| 主入口不含 Cesium | 构建 | ✅ | `grep -c cesium dist/index.js` = 0 |
+| **真实 npm install** | 集成 | ✅ | /tmp 全新项目 `npm install <本包>`，未装 Cesium 即可运行 |
+| 主入口运行 | 集成 | ✅ | `createEmbodiedScene` → 运动解算，速度 4.0 m/s |
+| `./cesium` 子路径 | 集成 | ✅ | `normalizeNumerals` 可用；缺 Cesium 时报错清晰 |
+| `./server` 子路径 | 集成 | ✅ | `attachVoiceStream` 可挂到外部 HTTP 服务 |
+| 最小示例 | 运行时 | ✅ | `node examples/minimal/index.ts` 跑通完整链路 |
+| **长距离完整到达** | 运行时 | ✅ | 144 米，自动减速，停在目标 4 米内 |
+| 浏览器回归 | 浏览器 | ✅ | 运动/修正/停止/动画全部正常 |
+
+### 架构改动
+
+- `src/body.ts`：`applyOutput` 从 cesium-adapter 拆出，定义引擎无关的 `BodyLike`（3 个方法）
+- `EnuFrame` 改为**注入** Cesium 命名空间，不再静态 import
+- `src/index.ts` 不再导出任何依赖 Cesium 的模块
+- `server/lib.ts` 可复用出口 / `server/index.ts` 可执行入口，两者分离
+
+**为什么这么做**：Three.js / Babylon / 自研引擎的场景，不应该为了用「目标驱动运动」
+而被迫打包 4MB 的 Cesium。
+
+### 踩的坑
+
+拆 Cesium 依赖时，demo 页面直接崩了：`EnuFrame 需要 Cesium`。
+原因是我把 `new EnuFrame(origin)` 改成需要注入，但没改 demo 的调用处。
+**教训**：改公开 API 的签名后，要立刻在真实运行环境（浏览器）回归，
+单元测试全绿不代表没坏 —— 单元测试用的是假 Cesium。
+
+### 仍未验证
+
+- 真实豆包 ASR 与真实麦克风（需要凭据）
+- 复杂地形悬崖反射（演示场景是缓坡）
+- 包发布到 npm registry（目前只验证了本地路径安装）
+
 ## 结论
 
 **运动层、反射层、语音协议层成立。** —— 这是本阶段要验证的核心命题。
