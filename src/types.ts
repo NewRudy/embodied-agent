@@ -88,6 +88,24 @@ export interface SceneAdapter {
     groundHeightAt(east: number, north: number): number | null;
     /** 把口语参照物解析为坐标；解析不了返回 null。例如「3 号风机」→ 位置。 */
     resolveReference(text: string): Vec3 | null;
+    /**
+     * 可选：列出场景里所有可去的参照物。
+     *
+     * 只有模型意图层会用到 —— 它需要知道「有哪些地方可选」，才能把
+     * 「那个大风车」映射到登记过的名字，而不是自己编一个坐标。
+     * 不实现这个方法时，模型层只能做「方位 + 距离」，做不了「去某物」。
+     */
+    listReferences?(): Array<{
+        name: string;
+        at: Vec3;
+        /**
+         * 可选：给人/模型看的描述。
+         *
+         * 「去那个绿色的点」这类话，模型必须知道哪个点是绿的才能答。
+         * 没有描述时它只能瞎猜，或者（正确地）拒绝。
+         */
+        description?: string;
+    }>;
 }
 
 /** 调参。全部有默认值，使用者通常只需改 1-2 个。 */

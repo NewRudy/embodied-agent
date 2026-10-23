@@ -148,3 +148,108 @@ test('「停下」不会被当成「往下」', () => {
     const r = parseIntent('停下', ctx());
     assert.equal(r?.action, 'stop');
 });
+
+// ==================== 置信度 ====================
+
+test('明确的规则命中给满置信度', () => {
+    for (const t of ['停', '去A点', '往前走20米', '往左一点', '跑起来']) {
+        const r = parseIntent(t, ctx({ resolve: (x: string) => (x.includes('A点') ? { east: 1, north: 1, up: 0 } : null) }));
+        assert.equal(r?.confidence, 1, `「${t}」应是明确指令`);
+    }
+});
+
+test('含糊指代降置信度，不按字面执行', () => {
+    // 这些句子里都有「走」，正则能命中，但用户没说是哪边
+    for (const t of ['大概往那边走吧', '随便走走吧', '那边看看']) {
+        const r = parseIntent(t, ctx());
+        if (r) {
+            assert.ok(
+                (r.confidence ?? 1) < 0.6,
+                `「${t}」不该被当成明确指令，实际置信度 ${r.confidence}`,
+            );
+        }
+    }
+});
+
+test('含糊词不影响明确方向', () => {
+    // 「往左」本身是明确的，即使带了「大概」
+    const r = parseIntent('大概往左一点', ctx({ goal: { position: { east: 10, north: 10, up: 0 }, tolerance: 3 } }));
+    assert.equal(r?.action, 'revise');
+    assert.equal(r?.confidence, 1, '明确方位不该因为「大概」而降级');
+});
+
+test('否定式停止', () => {
+    for (const t of ['别走了', '不要过去', '别跑了', '不用往前了']) {
+        assert.equal(parseIntent(t, ctx())?.action, 'stop', `「${t}」应识别为停止`);
+    }
+});
+
+// ==================== 绝对方位 ====================
+
+test('绝对方位与人物朝向无关', () => {
+    // 朝东站着说「往北走」，应该往北，不是往东
+    const r = parseIntent('往北走10米', ctx({ pose: { east: 0, north: 0, yaw: Math.PI / 2 } }));
+    assert.equal(r?.action, 'go');
+    assert.ok(near(r!.position!, { east: 0, north: 10, up: 0 }), JSON.stringify(r!.position));
+});
+
+test('「往东走二十米」不被「走」兜底成前进', () => {
+    // 这是真实踩到的 bug：规则层靠一个「走」字命中，把人往当前朝向送
+    const r = parseIntent('往东走二十米', ctx());
+    assert.equal(r?.rule, 'go-e', `实际 ${r?.rule}`);
+    assert.ok(near(r!.position!, { east: 20, north: 0, up: 0 }), JSON.stringify(r!.position));
+});
+
+test('八个方位都对', () => {
+    const cases: Array<[string, number, number]> = [
+        ['往北走10米', 0, 10],
+        ['往东北走10米', 7.07, 7.07],
+        ['往东走10米', 10, 0],
+        ['往东南走10米', 7.07, -7.07],
+        ['往南走10米', 0, -10],
+        ['往西南走10米', -7.07, -7.07],
+        ['往西走10米', -10, 0],
+        ['往西北走10米', -7.07, 7.07],
+    ];
+    for (const [text, e, n] of cases) {
+        const r = parseIntent(text, ctx());
+        assert.equal(r?.action, 'go', `「${text}」没解析`);
+        assert.ok(near(r!.position!, { east: e, north: n, up: 0 }, 0.1),
+            `「${text}」→ ${JSON.stringify(r!.position)}，期望 (${e}, ${n})`);
+    }
+});
+
+test('方位是定语时降置信度，不当成纯方向', () => {
+    // 「去南边的楼」要找的是楼，不是往南挪 10 米
+    const r = parseIntent('去南边的楼', ctx());
+    assert.ok(r, '应能识别出方位');
+    assert.ok((r!.confidence ?? 1) < 0.6, `置信度应低，实际 ${r!.confidence}`);
+});
+
+test('「东西」不被当成东', () => {
+    // 「把那个东西拿过来」里有个「东」，但那是「东西」
+    const r = parseIntent('把那个东西拿过来', ctx());
+    assert.equal(r, null, '不该解析成向东走');
+});
+
+test('否定式方位移动 → 停止', () => {
+    for (const t of ['别往东走', '不要往南去', '甭朝西边走']) {
+        assert.equal(parseIntent(t, ctx())?.action, 'stop', `「${t}」应识别为停止`);
+    }
+});
+
+test('方位后面跟指示词 → 是定语，降置信度', () => {
+    // 「带我去南边那个绿点看看」的目标是「绿点」，不是往南挪 10 米
+    for (const t of ['带我去南边那个绿点看看', '去东边的塔', '往北边那个门走']) {
+        const r = parseIntent(t, ctx());
+        assert.ok(r, `「${t}」应能识别`);
+        assert.ok((r!.confidence ?? 1) < 0.6, `「${t}」置信度应低，实际 ${r!.confidence}`);
+    }
+});
+
+test('方位后面直接跟动词 → 是方向，满置信度', () => {
+    for (const t of ['往东走三十米', '朝西边走', '向西南走15米', '往北']) {
+        const r = parseIntent(t, ctx());
+        assert.equal(r?.confidence, 1, `「${t}」应是明确方向`);
+    }
+});

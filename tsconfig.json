@@ -18,5 +18,5 @@
             "cesium": ["./node_modules/cesium"]
         }
     },
-    "include": ["src/**/*.ts", "server/**/*.ts", "test/**/*.ts"]
+    "include": ["src/**/*.ts", "server/**/*.ts", "test/**/*.ts", "demo/env.d.ts", "demo/sandbox/**/*.ts"]
 }

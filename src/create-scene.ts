@@ -22,7 +22,10 @@
 
 import type { Goal, Vec3 } from './types.ts';
 import { EmbodiedAgent } from './agent.ts';
-import { parseIntent } from './intent.ts';
+import { RuleDecider, decideFast, decideWithChain } from './intent.ts';
+import { CONFIDENCE_THRESHOLD, type Intent, type IntentDecider, type ParseContext } from './intent-types.ts';
+import { LlmDecider, type LlmDeciderOptions } from './llm-decider.ts';
+import { TaskQueue, splitSteps, type TaskStep } from './task-queue.ts';
 import { applyOutput, releaseBody, type BodyLike } from './body.ts';
 import { RealtimeVoice, type VoiceState } from './voice/realtime-voice.ts';
 import { SpeechOutput } from './voice/speech-output.ts';
@@ -50,6 +53,18 @@ export interface EmbodiedSceneOptions {
     log?: (line: string) => void;
     /** 状态变化回调（供 UI 显示）。 */
     onState?: (state: SceneState) => void;
+    /**
+     * 意图层配置。
+     *
+     * 不传时只有规则层 —— 零依赖、零延迟、零成本，能听懂「去A点」「往左一点」。
+     * 传 `llm: {...}` 或设置 EMBODIED_LLM_* 环境变量后，规则层听不懂的话会再问模型。
+     */
+    intent?: {
+        /** 模型决策器配置。传 false 明确关闭。 */
+        llm?: LlmDeciderOptions | false;
+        /** 自定义决策器，会排在规则层之后、模型层之前。 */
+        extraDeciders?: IntentDecider[];
+    };
 }
 
 export interface SceneState {
@@ -65,8 +80,18 @@ export interface EmbodiedScene {
     agent: EmbodiedAgent;
     voice: RealtimeVoice | null;
     speech: SpeechOutput | null;
-    /** 处理一句话（文字或语音转写都走这里）。 */
+    /** 多步任务队列。单步指令不经过它。 */
+    tasks: TaskQueue;
+    /**
+     * 处理一句话（文字或语音转写都走这里）。
+     *
+     * **同步返回**：规则层能听懂就当场执行完，「停」不会等一个 microtask。
+     * 规则层听不懂且配了模型时，模型在后台跑，结果回来再生效 ——
+     * 用序号保证「后说的指令永远赢过先说的」。
+     */
     handleCommand(text: string): void;
+    /** 同 handleCommand，但等模型层跑完。给需要确定性的调用方（测试、脚本）。 */
+    handleCommandAsync(text: string): Promise<void>;
     /** 每帧调用。返回是否需要重绘。 */
     tick(dt: number): void;
     /** 当前状态快照。 */
@@ -128,23 +153,77 @@ export function createEmbodiedScene(options: EmbodiedSceneOptions): EmbodiedScen
     }
 
     function stop() {
+        taskQueue.cancel();
         agent.cancel();
         if (options.player) {
             (options.player as unknown as { stopHorizontalMotion?: () => void }).stopHorizontalMotion?.();
         }
     }
 
-    function handleCommand(text: string) {
-        if (!text.trim()) return;
-        log(`🗣 ${text}`);
+    // —— 多步任务队列 ——
+    // 「先去A点，再去B点」这类句子会被切成多步，逐步执行。
+    // 单步指令不进队列，走原来的直接路径 —— 队列只处理真正有序的任务。
+    const taskQueue = new TaskQueue({
+        onAdvance: ({ index, step, total }) => {
+            log(`▶ 第 ${index + 1}/${total} 步：${step.label}`);
+            agent.setGoal(step.goal);
+        },
+        onFinish: ({ completed, failed, aborted }) => {
+            if (aborted) {
+                log(`⏹ 任务中止（完成 ${completed}，失败 ${failed}）`);
+                speech?.speak('任务中止');
+            } else {
+                log(`✅ 任务完成（${completed} 步）`);
+                speech?.speak('任务完成');
+            }
+        },
+    });
 
+    // —— 意图决策链 ——
+    // 顺序：规则 → 自定义 → 模型。规则层永远先上，它命中就不花模型的钱。
+    const deciders: IntentDecider[] = [new RuleDecider()];
+    if (options.intent?.extraDeciders) deciders.push(...options.intent.extraDeciders);
+    if (options.intent?.llm !== false) {
+        const llm = new LlmDecider(options.intent?.llm || {});
+        if (llm.available()) {
+            deciders.push(llm);
+            log(`🧠 模型意图层已启用：${llm.name}`);
+        } else {
+            log('🧠 未配置模型意图层（EMBODIED_LLM_API_KEY），只用规则层');
+        }
+    }
+
+    /** 最近几轮，给模型做上下文。只留 5 轮，避免 prompt 无限膨胀。 */
+    const history: Array<{ text: string; rule: string }> = [];
+    /** 并发保护：新指令作废旧指令，防止慢模型返回时覆盖用户最新意图。 */
+    let commandSeq = 0;
+
+    function buildContext(): ParseContext {
         const pose = adapter.getPose();
-        const intent = parseIntent(text, {
+        return {
             pose: { east: pose.east, north: pose.north, yaw: pose.yaw },
             goal: agent.currentGoal,
             resolve: t => adapter.resolveReference(t),
             defaultStep: 10,
-        });
+            references: adapter.listReferences?.(),
+            history: history.slice(-5),
+        };
+    }
+
+    function formatTrace(trace: Array<{ name: string; outcome: string; detail?: string }>): string {
+        // 错误一定要带上原因。只打「llm:error」等于没打 —— 排查时得靠猜。
+        return trace
+            .map(t => (t.detail ? `${t.name}:${t.outcome}(${t.detail})` : `${t.name}:${t.outcome}`))
+            .join(' ');
+    }
+
+    /** 拿到意图之后统一走这里。seq 不符说明已有更新指令，丢弃。 */
+    function finish(text: string, intent: Intent | null, seq: number): void {
+        // 慢模型返回时用户已经说了别的话 —— 丢弃，不要抢方向盘
+        if (seq !== commandSeq) {
+            log('   ↳ 已被更新的指令取代，忽略');
+            return;
+        }
 
         if (!intent) {
             log('   → 没听懂');
@@ -153,6 +232,160 @@ export function createEmbodiedScene(options: EmbodiedSceneOptions): EmbodiedScen
             return;
         }
 
+        if ((intent.confidence ?? 1) < CONFIDENCE_THRESHOLD) {
+            log(`   → 没把握（置信度 ${(intent.confidence ?? 0).toFixed(2)}），不执行`);
+            speech?.speak('我不太确定，请再说一次');
+            emit();
+            return;
+        }
+
+        history.push({ text, rule: intent.rule });
+        if (history.length > 20) history.shift();
+
+        applyIntent(intent, text);
+        emit();
+    }
+
+    /**
+     * 多步句子的处理路径。
+     *
+     * 只支持「走」类步骤（go / approach）。原因：队列表达的是**空间顺序**，
+     * 「先跑起来再转向」这种时序动作塞进队列会变成四不像 ——
+     * 那类句子请拆成两句说，或者等以后做真正的行为树。
+     */
+    async function finishMultiStep(parts: string[], seq: number): Promise<void> {
+        const steps: TaskStep[] = [];
+        for (const part of parts) {
+            const ctx = buildContext();
+            let intent: Intent | null = null;
+            try {
+                const slow = await decideWithChain(part, ctx, deciders);
+                intent = slow.intent;
+            } catch (e) {
+                log(`   ⚠️ 「${part}」解析失败：${e instanceof Error ? e.message : String(e)}`);
+            }
+
+            if (seq !== commandSeq) {
+                log('   ↳ 已被更新的指令取代，忽略');
+                return;
+            }
+
+            if (!intent) {
+                log(`   → 「${part}」没听懂，整条任务不执行`);
+                speech?.speak('有一步没听懂，任务取消');
+                return;
+            }
+            if ((intent.confidence ?? 1) < CONFIDENCE_THRESHOLD) {
+                log(`   → 「${part}」没把握，整条任务不执行`);
+                speech?.speak('有一步没把握，任务取消');
+                return;
+            }
+            if (intent.action !== 'go' && intent.action !== 'approach') {
+                log(`   → 「${part}」是 ${intent.action}，多步任务只支持移动类步骤`);
+                speech?.speak('多步任务只支持去某处的步骤');
+                return;
+            }
+            steps.push({
+                goal: { position: intent.position!, tolerance: 4, label: part },
+                label: part,
+            });
+        }
+
+        if (steps.length === 0) return;
+        log(`📋 拆成 ${steps.length} 步：${steps.map(s => s.label).join(' → ')}`);
+        taskQueue.reset();
+        taskQueue.enqueue(steps);
+        taskQueue.start();
+        emit();
+    }
+
+    /**
+     * 是否是多步句子。
+     *
+     * 返回 Promise<boolean> 而不是 boolean：解析每一步都要走决策链，
+     * 调用方（尤其 handleCommandAsync）必须能等它，否则测试和脚本会在
+     * 队列还没建好时就去断言。
+     * handleCommand 走 fire-and-forget，不等。
+     */
+    async function tryMultiStep(text: string, seq: number): Promise<boolean> {
+        const parts = splitSteps(text);
+        if (parts.length <= 1) return false;
+        await finishMultiStep(parts, seq);
+        return true;
+    }
+
+    /**
+     * 同步入口。规则层命中时**当场执行完**，不等 microtask。
+     *
+     * 这不是微优化：语音回调里调它，如果「停」要等一个 microtask 才生效，
+     * 人物会在喊停之后还多走一帧。调用方也不该为了「停」而写 await。
+     */
+    function handleCommand(text: string): void {
+        if (!text.trim()) return;
+        const seq = ++commandSeq;
+        log(`🗣 ${text}`);
+
+        // 多步句子异步解析，不等它 —— 结果回来再生效，seq 会保护
+        if (splitSteps(text).length > 1) {
+            void tryMultiStep(text, seq);
+            return;
+        }
+
+        const ctx = buildContext();
+        const fast = decideFast(text, ctx, deciders);
+        if (fast.done) {
+            if (fast.trace.length > 1) log(`   · ${formatTrace(fast.trace)}`);
+            finish(text, fast.intent, seq);
+            return;
+        }
+
+        // 规则层没搞定 —— 问模型，结果回来再生效。
+        // 这里**不打** fast.trace：它全是「异步，留给慢路径」这种噪音，
+        // 慢路径自己会打一份完整的。
+        void (async () => {
+            let intent: Intent | null = null;
+            try {
+                const slow = await decideWithChain(text, ctx, deciders);
+                if (slow.trace.length > 1) log(`   · ${formatTrace(slow.trace)}`);
+                intent = slow.intent;
+            } catch (e) {
+                log(`   ⚠️ 意图层异常：${e instanceof Error ? e.message : String(e)}`);
+            }
+            finish(text, intent, seq);
+        })();
+    }
+
+    /** 等模型层跑完的版本。测试和脚本用。 */
+    async function handleCommandAsync(text: string): Promise<void> {
+        if (!text.trim()) return;
+        const seq = ++commandSeq;
+        log(`🗣 ${text}`);
+
+        if (splitSteps(text).length > 1) {
+            await tryMultiStep(text, seq);
+            return;
+        }
+
+        const ctx = buildContext();
+        const fast = decideFast(text, ctx, deciders);
+        if (fast.done) {
+            if (fast.trace.length > 1) log(`   · ${formatTrace(fast.trace)}`);
+            finish(text, fast.intent, seq);
+            return;
+        }
+
+        let intent: Intent | null = null;
+        try {
+            const slow = await decideWithChain(text, ctx, deciders);
+            if (slow.trace.length > 1) log(`   · ${formatTrace(slow.trace)}`);
+            intent = slow.intent;
+        } catch (e) {
+            log(`   ⚠️ 意图层异常：${e instanceof Error ? e.message : String(e)}`);
+        }
+        finish(text, intent, seq);
+    }
+
+    function applyIntent(intent: Intent, text: string) {
         switch (intent.action) {
             case 'stop':
                 stop();
@@ -164,8 +397,14 @@ export function createEmbodiedScene(options: EmbodiedSceneOptions): EmbodiedScen
                 log(`   → 出发 → ${text}`);
                 break;
             case 'revise':
-                agent.reviseGoal({ position: intent.position! });
-                log('   → 修正目标');
+                if (!agent.currentGoal) {
+                    // 没有活动目标时「往左一点」没有参照，按原地侧移处理
+                    agent.setGoal({ position: intent.position!, tolerance: 4, label: text });
+                    log('   → 出发（无活动目标，按侧移处理）');
+                } else {
+                    agent.reviseGoal({ position: intent.position! });
+                    log('   → 修正目标');
+                }
                 break;
             case 'turn': {
                 const p = adapter.getPose();
@@ -185,8 +424,9 @@ export function createEmbodiedScene(options: EmbodiedSceneOptions): EmbodiedScen
                     ?.setFlightMode?.(!!intent.fly);
                 log(`   → ${intent.fly ? '起飞' : '降落'}`);
                 break;
+            default:
+                log('   → 未支持的动作');
         }
-        emit();
     }
 
     function tick(dt: number) {
@@ -194,14 +434,23 @@ export function createEmbodiedScene(options: EmbodiedSceneOptions): EmbodiedScen
         const out = agent.update(dt);
         if (options.player) applyOutput(options.player, out);
 
+        // 队列推进必须在到达回调之前 —— 这样「到达并开始下一步」在同一帧内完成，
+        // 人物不会在两步之间停一帧。
+        taskQueue.notify(out.justArrived, out.failure);
+
         // 到达/失败时说话
-        if (out.justArrived) {
-            const label = out.goal?.label ?? '目标';
-            log(`✅ 到达 ${label}`);
-            speech?.speak(`已到达${cleanLabel(label)}`);
+        // 队列运行中由队列自己播报，这里不重复播
+        if (!taskQueue.isRunning) {
+            if (out.justArrived) {
+                const label = out.goal?.label ?? '目标';
+                log(`✅ 到达 ${label}`);
+                speech?.speak(`已到达${cleanLabel(label)}`);
+            } else if (out.failure) {
+                log(`⚠️ 失败：${out.failure}`);
+                speech?.speak(failureText(out.failure));
+            }
         } else if (out.failure) {
-            log(`⚠️ 失败：${out.failure}`);
-            speech?.speak(failureText(out.failure));
+            log(`⚠️ 任务步失败：${out.failure}`);
         }
         emit(out);
     }
@@ -227,7 +476,9 @@ export function createEmbodiedScene(options: EmbodiedSceneOptions): EmbodiedScen
         agent,
         voice,
         speech,
+        tasks: taskQueue,
         handleCommand,
+        handleCommandAsync,
         tick,
         setGoal: goal => agent.setGoal(goal),
         stop,
@@ -242,6 +493,7 @@ export function createEmbodiedScene(options: EmbodiedSceneOptions): EmbodiedScen
             disposed = true;
             voice?.stop();
             speech?.cancel();
+            taskQueue.cancel();
             agent.release();
             if (options.player) releaseBody(options.player);
         },

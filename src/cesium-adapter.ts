@@ -120,6 +120,8 @@ export interface CesiumAdapterOptions {
     references?: Map<string, Vec3>;
     /** 可选的别名表：口语名 → 正式名。 */
     aliases?: Map<string, string>;
+    /** 可选的描述表：正式名 → 给人/模型看的描述（「白色风力发电机」）。 */
+    descriptions?: Map<string, string>;
 }
 
 /**
@@ -130,12 +132,14 @@ export class CesiumSceneAdapter implements SceneAdapter {
     private readonly frame: EnuFrame;
     private readonly references: Map<string, Vec3>;
     private readonly aliases: Map<string, string>;
+    private readonly descriptions: Map<string, string>;
 
     constructor(opts: CesiumAdapterOptions) {
         this.player = opts.player;
         this.frame = opts.frame;
         this.references = opts.references ?? new Map();
         this.aliases = opts.aliases ?? new Map();
+        this.descriptions = opts.descriptions ?? new Map();
     }
 
     getPose(): Pose {
@@ -181,6 +185,19 @@ export class CesiumSceneAdapter implements SceneAdapter {
     /** 运行期注册参照物（场景加载后调用）。 */
     addReference(name: string, position: Vec3): void {
         this.references.set(name, position);
+    }
+
+    /** 给模型意图层看的可去地点清单。 */
+    listReferences(): Array<{ name: string; at: Vec3; description?: string }> {
+        return [...this.references.entries()].map(([name, at]) => {
+            const description = this.descriptions.get(name);
+            return description ? { name, at, description } : { name, at };
+        });
+    }
+
+    /** 给某个参照物加描述，帮助模型理解「那个白色的塔」。 */
+    setDescription(name: string, description: string): void {
+        this.descriptions.set(name, description);
     }
 }
 

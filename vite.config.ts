@@ -10,6 +10,15 @@ export default defineConfig({
     server: {
         host: true,
         port: 5180,
+        // 模型网关不支持 CORS 预检（OPTIONS 返回 404），浏览器不能直连。
+        // 开发期用 vite 代理绕开；生产环境必须由使用者自己的后端转发。
+        proxy: {
+            '/llm': {
+                target: 'http://127.0.0.1:3425',
+                changeOrigin: true,
+                rewrite: p => p.replace(/^\/llm/, '/v1'),
+            },
+        },
     },
     define: {
         CESIUM_BASE_URL: JSON.stringify(CESIUM_BASE),
@@ -26,6 +35,7 @@ export default defineConfig({
         rollupOptions: {
             input: {
                 wind: path.resolve(__dirname, 'demo/wind/index.html'),
+                sandbox: path.resolve(__dirname, 'demo/sandbox/index.html'),
             },
         },
     },

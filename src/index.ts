@@ -23,8 +23,18 @@ export type { EmbodiedScene, EmbodiedSceneOptions, SceneState } from './create-s
 // —— 核心 ——
 export { EmbodiedAgent, goalAt, wrapPi } from './agent.ts';
 export { arriveSpeed, headingTo, horizontalDistance, steerToward, turnToward, unitTo } from './steering.ts';
-export { parseIntent } from './intent.ts';
+export { parseIntent, RuleDecider, decideFast, decideWithChain } from './intent.ts';
 export type { Intent, IntentAction, ParseContext, ReferenceResolver } from './intent.ts';
+
+// —— 意图决策层（可插拔） ——
+export { CONFIDENCE_THRESHOLD } from './intent-types.ts';
+export type { DecisionChainResult, IntentDecider } from './intent-types.ts';
+export { LlmDecider, validateLlmIntent } from './llm-decider.ts';
+export type { LlmDeciderOptions } from './llm-decider.ts';
+
+// —— 多步任务编排 ——
+export { TaskQueue, splitSteps } from './task-queue.ts';
+export type { TaskQueueOptions, TaskStep } from './task-queue.ts';
 export { DEFAULT_CONFIG, STOP } from './types.ts';
 export type {
     AgentConfig,

@@ -139,3 +139,119 @@ test('dispose 后不再驱动人物', () => {
     scene.tick(0.016);
     assert.equal(getMove(), before, 'dispose 后 tick 不应再写 movement');
 });
+
+// ==================== 多步任务编排 ====================
+
+/** 一个能真正走起来的场景：每 tick 把人物朝目标推进。 */
+function walkingScene() {
+    const pose: Pose = { east: 0, north: 0, up: 0, yaw: 0, flying: false, onGround: true };
+    const places: Record<string, Vec3> = {
+        'A点': { east: 30, north: 0, up: 0 },
+        'B点': { east: 0, north: 30, up: 0 },
+        'C点': { east: -30, north: 0, up: 0 },
+    };
+    const adapter: SceneAdapter = {
+        getPose: () => ({ ...pose }),
+        groundHeightAt: () => 0,
+        resolveReference: (text: string) => {
+            for (const [name, at] of Object.entries(places)) {
+                if (text.includes(name)) return at;
+            }
+            return null;
+        },
+        listReferences: () => Object.entries(places).map(([name, at]) => ({ name, at })),
+    };
+    /** 把人物朝当前目标推进一步，模拟物理。 */
+    function step(speed = 5, dt = 0.2) {
+        const scene = holder.scene;
+        const goal = scene?.agent.currentGoal;
+        if (!goal) return;
+        const dx = goal.position.east - pose.east;
+        const dy = goal.position.north - pose.north;
+        const d = Math.hypot(dx, dy);
+        if (d < 1e-6) return;
+        const move = Math.min(speed * dt, d);
+        pose.east += (dx / d) * move;
+        pose.north += (dy / d) * move;
+        pose.yaw = Math.atan2(dx, dy);
+    }
+    const holder: { scene?: ReturnType<typeof createEmbodiedScene> } = {};
+    return { pose, adapter, step, holder, places };
+}
+
+test('「先去A点，再去B点」逐步执行', async () => {
+    const { adapter, step, holder } = walkingScene();
+    const logs: string[] = [];
+    const scene = createEmbodiedScene({ adapter, log: l => logs.push(l), intent: { llm: false } });
+    holder.scene = scene;
+
+    await scene.handleCommandAsync('先去A点，再去B点');
+    assert.ok(logs.some(l => l.includes('拆成 2 步')), logs.join('\n'));
+    assert.equal(scene.tasks.total, 2);
+    assert.equal(scene.tasks.isRunning, true);
+
+    // 走到 A 点
+    for (let i = 0; i < 200 && scene.agent.currentGoal?.position.north !== 30; i++) {
+        step();
+        scene.tick(0.2);
+    }
+    // 到达 A 的那一帧队列立刻切到 B，所以 currentState 已经是 active 了。
+    // 这是设计意图：两步之间不该停一帧。
+    assert.equal(scene.agent.currentGoal?.position.north, 30, '应已切到 B 点');
+    assert.ok(scene.tasks.isRunning, '还有第二步，队列不该结束');
+
+    // 走到 B 点
+    for (let i = 0; i < 200 && scene.tasks.isRunning; i++) {
+        step();
+        scene.tick(0.2);
+    }
+    assert.equal(scene.tasks.isRunning, false);
+    assert.ok(logs.some(l => l.includes('任务完成')), logs.join('\n'));
+});
+
+test('多步任务中喊停会中止队列', async () => {
+    const { adapter, holder } = walkingScene();
+    const scene = createEmbodiedScene({ adapter, log: () => {}, intent: { llm: false } });
+    holder.scene = scene;
+
+    await scene.handleCommandAsync('先去A点，再去B点');
+    assert.equal(scene.tasks.isRunning, true);
+
+    scene.handleCommand('停');
+    assert.equal(scene.tasks.isRunning, false);
+    assert.equal(scene.agent.currentState, 'cancelled');
+});
+
+test('多步任务里有一步听不懂 → 整条不执行', async () => {
+    const { adapter, holder } = walkingScene();
+    const logs: string[] = [];
+    const scene = createEmbodiedScene({ adapter, log: l => logs.push(l), intent: { llm: false } });
+    holder.scene = scene;
+
+    await scene.handleCommandAsync('先去A点，再去看极光');
+    assert.equal(scene.tasks.isRunning, false, '有一步听不懂就不该开始');
+    assert.equal(scene.agent.currentState, 'idle');
+    assert.ok(logs.some(l => l.includes('没听懂')), logs.join('\n'));
+});
+
+test('单步句子不进队列', async () => {
+    const { adapter, holder } = walkingScene();
+    const scene = createEmbodiedScene({ adapter, log: () => {}, intent: { llm: false } });
+    holder.scene = scene;
+
+    await scene.handleCommandAsync('去A点');
+    assert.equal(scene.tasks.isRunning, false);
+    assert.equal(scene.tasks.total, 0);
+    assert.equal(scene.agent.currentState, 'active');
+});
+
+test('非移动类步骤被拒绝', async () => {
+    const { adapter, holder } = walkingScene();
+    const logs: string[] = [];
+    const scene = createEmbodiedScene({ adapter, log: l => logs.push(l), intent: { llm: false } });
+    holder.scene = scene;
+
+    await scene.handleCommandAsync('先去A点，再跑起来');
+    assert.equal(scene.tasks.isRunning, false);
+    assert.ok(logs.some(l => l.includes('只支持移动类步骤')), logs.join('\n'));
+});
