@@ -50,6 +50,9 @@ export function attachVoiceStream(server: HttpServer, options: VoiceStreamOption
                 && ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname);
         } catch { /* 浏览器必须带 Origin */ }
         if (!origin || (!localOrigin && !configured.includes(origin))) {
+            // 这条最容易踩：Origin 不在白名单时连接直接被拒，
+            // 浏览器侧只看到「连接已结束」，完全看不出是跨域问题。
+            console.warn(`[voice] 拒绝连接：Origin=${origin ?? '(无)'}`);
             socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
             return;
         }
@@ -63,7 +66,6 @@ export function attachVoiceStream(server: HttpServer, options: VoiceStreamOption
         client.onclose = () => clients.delete(client);
         handleConnection(client);
     });
-
     function handleConnection(client: ServerWebSocket) {
         const sessionId = `voice-${randomUUID()}`;
         const send = (event: VoiceStreamEvent) => {
@@ -77,7 +79,10 @@ export function attachVoiceStream(server: HttpServer, options: VoiceStreamOption
         const seen = new Set<string>();
         let finals = 0;
         const upstream = openDoubaoStream(sessionId, {
-            ready: () => send({ type: 'ready', sessionId }),
+            ready: () => {
+                console.log(`[voice] ${sessionId} 上游就绪`);
+                send({ type: 'ready', sessionId });
+            },
             transcript: result => {
                 // 去重：同一句的临时结果会反复推送，定稿只处理一次
                 const utterances = result.utterances.filter(u => {
@@ -89,6 +94,7 @@ export function attachVoiceStream(server: HttpServer, options: VoiceStreamOption
                 if (utterances.length) send({ type: 'transcript', sessionId, utterances, text: result.text });
             },
             error: code => {
+                console.warn(`[voice] ${sessionId} 上游错误：${code}`);
                 send({
                     type: 'error',
                     code,
