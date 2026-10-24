@@ -40,7 +40,23 @@ export class EmbodiedAgent {
     private accumulatedMove = 0;
     private stillTimer = 0;
 
-    // 上一帧的 yaw（用于受 turnRate 限制的转向）
+    /**
+     * 我们**自己**认为的朝向（弧度）。
+     *
+     * 为什么不每帧都读 `scene.getPose().yaw`：那是「身体实际朝哪」，
+     * 而 setScriptedYaw 下发的值要等物理/动画消费之后才反映到模型上，
+     * 有些实现（Cesium 的 getPlayerHeading）压根不同步这个值 ——
+     * 实测真实场景里 pose.yaw 恒为 0，而我们已经转到 142°。
+     *
+     * 如果每帧都从 pose.yaw 起算，等于每帧把转身进度清零，
+     * 只靠这个缓存勉强连贯；一旦外部重置 scriptedYaw，转身会突然跳回去。
+     *
+     * 规则：
+     *   - 第一次接管（lastYaw 为 null）才读 pose.yaw 作为起点
+     *   - 之后一律以自己上一帧算出的值为准
+     *   - release() **不清空**：我们下发的朝向是身体朝向的最佳估计，
+     *     清掉反而会退回到不可靠的 pose.yaw
+     */
     private lastYaw: number | null = null;
 
     constructor(scene: SceneAdapter, options: AgentOptions = {}) {
@@ -92,7 +108,8 @@ export class EmbodiedAgent {
         this.goal = null;
         this.state = 'idle';
         this.lastPos = null;
-        this.lastYaw = null;
+        // 注意**不清** lastYaw：它是「身体现在朝哪」的最佳估计。
+        // 清成 null 会让下一次接管退回去读不可靠的 pose.yaw。
         this.resetStuck();
     }
 
@@ -182,11 +199,15 @@ export class EmbodiedAgent {
         }
 
         // —— 运动解算 ——
-        const movement = steerToward(pose, goal.position, tolerance, this.config);
+        // 把当前朝向传进去：偏离目标方向太多时先原地转身再走，
+        // 否则转向受 turnRate 限制，前 0.5 秒是「横着滑过去」。
+        const currentYaw = this.lastYaw ?? pose.yaw;
+        const movement = steerToward(pose, goal.position, tolerance, this.config, {
+            facingYaw: currentYaw,
+        });
 
         // —— 朝向：朝行进方向转，受角速度限制 ——
         const targetYaw = Math.atan2(dir.east, dir.north);
-        const currentYaw = this.lastYaw ?? pose.yaw;
         const yaw = turnToward(currentYaw, targetYaw, dt, this.config.turnRate);
         this.lastYaw = yaw;
 

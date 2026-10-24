@@ -124,6 +124,19 @@ export interface AgentConfig {
     runThreshold: number;
     /** 转向角速度上限（弧度/秒）。 */
     turnRate: number;
+    /**
+     * 偏离目标方向超过这个角度就**先原地转身，不往前走**。
+     *
+     * 为什么需要：转向受 turnRate 限制，转 180° 要 1 秒。如果这 1 秒里
+     * 还全速前进，人物就是「横着滑过去」—— 侧滑感比慢更假。
+     * 真人转身时是先站定转过来再走。
+     *
+     * 90°：横着走（侧身平移）是最难看的动作，正好落在边界上要触发；
+     * 小角度修正不会打断行走。
+     */
+    turnFirstAngle: number;
+    /** 偏离小于这个角度就完全不减速。中间区间按比例降速，避免突变。 */
+    alignAngle: number;
     /** 卡住判定：位移低于 stuckDistance 持续 stuckSeconds 秒即判失败。 */
     stuckDistance: number;
     stuckSeconds: number;
@@ -151,6 +164,10 @@ export const DEFAULT_CONFIG: AgentConfig = Object.freeze({
     arriveTolerance: 3,
     runThreshold: 5,
     turnRate: Math.PI,          // 180°/s
+    // 90°/40°：横着走和掉头先站定转过来；小角度修正边走边转。
+    // 90° 这个边界是量出来的 —— 90° 时如果还保持速度，屏幕上就是标准的侧滑。
+    turnFirstAngle: (90 * Math.PI) / 180,
+    alignAngle: (40 * Math.PI) / 180,
     stuckDistance: 0.15,
     stuckSeconds: 2.5,
     defaultTimeout: 600,

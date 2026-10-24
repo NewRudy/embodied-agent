@@ -339,3 +339,46 @@ test('HTTP 5xx 计入失败（不能把服务端故障当成模型答错）', as
     await assert.rejects(() => d.decide('去A点', ctx()), /LLM_HTTP_503/);
     assert.equal(d.circuitOpen, true);
 });
+
+// ==================== 响应速度：800ms 超时 ====================
+//
+// 用户验收线是「说到执行不超过 1 秒」。
+// 规则层约 430ms（ASR 定稿 415ms + 解析 0.02ms），模型层必须不拖后腿。
+
+test('默认超时是 800ms', () => {
+    // 这个数字是实测出来的：本机网关非推理模型往返 3.1–4.6 秒，
+    // 4 秒超时等于「几乎每次等到超时」。改成 800ms 后，
+    // 模糊说法会快速失败并降级，而不是让用户干等。
+    const d = new LlmDecider({ apiKey: 'k' });
+    assert.equal((d as unknown as { options: { timeoutMs: number } }).options.timeoutMs, 800);
+});
+
+test('超时后抛 AbortError，不会一直挂着', async () => {
+    // 模拟一个永不返回的模型
+    const hanging = ((_url: string, init: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => {
+                const e = new Error('aborted');
+                e.name = 'AbortError';
+                reject(e);
+            });
+        })) as unknown as typeof fetch;
+
+    const d = new LlmDecider({ apiKey: 'k', fetchImpl: hanging, timeoutMs: 60 });
+    const t0 = performance.now();
+    await assert.rejects(() => d.decide('去那个白白的风车', ctx()));
+    const elapsed = performance.now() - t0;
+    assert.ok(elapsed < 500, `应该在 60ms 左右超时，实际 ${elapsed.toFixed(0)}ms`);
+});
+
+test('超时计入失败，连续超时会熔断', async () => {
+    const hanging = ((_url: string, init: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        })) as unknown as typeof fetch;
+
+    const d = new LlmDecider({ apiKey: 'k', fetchImpl: hanging, timeoutMs: 30, failureThreshold: 2 });
+    await assert.rejects(() => d.decide('去A点', ctx()));
+    await assert.rejects(() => d.decide('去A点', ctx()));
+    assert.equal(d.circuitOpen, true, '连续超时应该熔断，不再每次都白等');
+});

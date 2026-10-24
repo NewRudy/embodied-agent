@@ -47,7 +47,7 @@ function fakePlayer() {
 }
 
 test('说「去3号风机」后开始朝目标移动', () => {
-    const { adapter } = fakeScene();
+    const { adapter, pose } = fakeScene();
     const { player, getMove } = fakePlayer();
     const scene = createEmbodiedScene({ adapter, player: player as never, log: () => {} });
 
@@ -55,10 +55,19 @@ test('说「去3号风机」后开始朝目标移动', () => {
     assert.equal(scene.agent.currentState, 'active');
     assert.equal(scene.agent.currentGoal?.position.east, 100);
 
+    // 初始朝北（yaw=0），目标正东 —— 偏 90°，正好在 turnFirstAngle 上。
+    // 第一帧应该是「站定转身」，不是横着滑出去。
+    scene.tick(0.016);
+    const first = getMove();
+    assert.ok(first);
+    assert.equal(first!.speedMetersPerSecond, 0, '偏离 90° 应先转身');
+    assert.ok(first!.east > 0.9, '但方向指令已经指向东，转身要朝这边转');
+
+    // 转到位之后（0.5s ≈ 31 帧）才开始移动
+    pose.yaw = Math.PI / 2; // 模拟转向完成
     scene.tick(0.016);
     const move = getMove();
-    assert.ok(move);
-    assert.ok(move!.speedMetersPerSecond > 0, '应该有速度');
+    assert.ok(move!.speedMetersPerSecond > 0, '转完身应该有速度');
     assert.ok(move!.east > 0.9, '应该朝东走');
 });
 

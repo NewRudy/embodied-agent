@@ -311,3 +311,122 @@ test('没有目标时输出静止，不抛错', () => {
     assert.equal(out.movement.speedMetersPerSecond, 0);
     assert.equal(out.goal, null);
 });
+
+// ==================== 先转再走（消除侧滑） ====================
+//
+// 转向受 turnRate 限制（180°/s），转 180° 要 1 秒。
+// 如果这 1 秒里还全速前进，人物就是「横着滑过去」——
+// 侧滑感比慢更假，真人转身时是先站定转过来再走。
+
+test('朝东站立，让它往北走：第一步应该是原地转身，速度为 0', () => {
+    const { scene, step } = simScene({ east: 0, north: 0, yaw: Math.PI / 2 });
+    const agent = new EmbodiedAgent(scene);
+    agent.setGoal({ position: { east: 0, north: 100, up: 0 }, label: '北边', tolerance: 3 });
+
+    const out = agent.update(DT);
+    assert.equal(out.movement.speedMetersPerSecond, 0, '偏离 90° 达到 turnFirstAngle，必须站定转身');
+
+    // 但朝向必须在转
+    assert.ok(out.yaw != null);
+    assert.ok(Math.abs(wrapPi(out.yaw! - Math.PI / 2)) > 0, 'yaw 应该开始变化');
+
+    // 转的过程中位移应该非常小（不是一上来就横着滑出去）
+    for (let i = 0; i < 5; i++) {
+        step(agent.update(DT).movement);
+    }
+    const moved = Math.hypot(scene.getPose().east, scene.getPose().north);
+    assert.ok(moved < 0.5, `转身过程中只应有微小位移，实际移动了 ${moved.toFixed(2)}m`);
+});
+
+test('转过身后才开始全速前进', () => {
+    const { scene, step } = simScene({ east: 0, north: 0, yaw: Math.PI / 2 });
+    const agent = new EmbodiedAgent(scene);
+    agent.setGoal({ position: { east: 0, north: 100, up: 0 }, label: '北边', tolerance: 3 });
+
+    let firstMovingFrame = -1;
+    for (let i = 0; i < 120; i++) {
+        const o = agent.update(DT);
+        if (o.movement.speedMetersPerSecond > 0 && firstMovingFrame < 0) firstMovingFrame = i;
+        step(o.movement);
+    }
+    // 转 90° 需要 0.5s ≈ 30 帧
+    assert.ok(firstMovingFrame >= 0, '最终应该开始移动');
+    assert.ok(firstMovingFrame <= 40, `应该在约 30 帧内转完开始走，实际第 ${firstMovingFrame} 帧`);
+    // 转身完成后应该真的在往北走
+    assert.ok(scene.getPose().north > 1, '应该往北移动了');
+});
+
+test('小角度偏差不打断行走（边走边修）', () => {
+    // 朝北 20°，目标正北 —— 小于 alignAngle(40°)，不该停下
+    const { scene } = simScene({ east: 0, north: 0, yaw: (20 * Math.PI) / 180 });
+    const agent = new EmbodiedAgent(scene);
+    agent.setGoal({ position: { east: 0, north: 100, up: 0 }, label: '北边', tolerance: 3 });
+
+    const out = agent.update(DT);
+    assert.ok(out.movement.speedMetersPerSecond > 0, '小角度偏差不应该让人物停下');
+    assert.equal(out.movement.speedMetersPerSecond, DEFAULT_CONFIG.walkSpeed, '小于 alignAngle 不减速');
+});
+
+test('中间角度按比例降速，不是突变', () => {
+    const c = DEFAULT_CONFIG;
+    const mid = (c.alignAngle + c.turnFirstAngle) / 2;
+    const { scene } = simScene({ east: 0, north: 0, yaw: mid });
+    const agent = new EmbodiedAgent(scene);
+    agent.setGoal({ position: { east: 0, north: 100, up: 0 }, label: '北边', tolerance: 3 });
+
+    const speed = agent.update(DT).movement.speedMetersPerSecond;
+    assert.ok(speed > 0, '中间角度不该完全停住');
+    assert.ok(speed < c.walkSpeed, '中间角度应该降速');
+});
+
+test('完全背对目标（180°）也是先转再走', () => {
+    const { scene } = simScene({ east: 0, north: 0, yaw: Math.PI });
+    const agent = new EmbodiedAgent(scene);
+    agent.setGoal({ position: { east: 0, north: 100, up: 0 }, label: '北边', tolerance: 3 });
+
+    const out = agent.update(DT);
+    assert.equal(out.movement.speedMetersPerSecond, 0, '掉头必须先站定');
+});
+
+// ==================== 朝向以自己为准，不信 pose.yaw ====================
+//
+// 真实场景里踩到的：setScriptedYaw 下发了 142°，但 adapter.getPose().yaw
+// 一直是 0（Cesium 的 getPlayerHeading 不同步这个值）。
+// 如果每帧都从 pose.yaw 起算，等于每帧把转身进度清零。
+
+test('pose.yaw 不更新时，转身仍能持续推进到目标方向', () => {
+    // 场景永远报告 yaw=0，但 agent 应该自己记住转过多少
+    const { scene, step } = simScene({ east: 0, north: 0, yaw: 0 });
+    const agent = new EmbodiedAgent(scene);
+    agent.setGoal({ position: { east: 100, north: 0, up: 0 }, label: '东边', tolerance: 3 });
+
+    const yaws: number[] = [];
+    for (let i = 0; i < 60; i++) {
+        const out = agent.update(DT);
+        if (out.yaw != null) yaws.push(out.yaw);
+        step(out.movement);
+    }
+    // 目标正东 = π/2。应该在 30 帧左右转到位，而不是卡在每帧重来的小角度
+    const finalYaw = yaws[yaws.length - 1];
+    assert.ok(Math.abs(wrapPi(finalYaw - Math.PI / 2)) < 0.05,
+        `应转到 90°，实际 ${(finalYaw * 180 / Math.PI).toFixed(0)}°`);
+    // 且是单调递增过去的，不是跳变
+    assert.ok(yaws[5] < yaws[20] && yaws[20] < yaws[29], '转身应该连续推进');
+});
+
+test('release 后再接管，沿用上次的朝向估计而不是退回 pose.yaw', () => {
+    const { scene, step } = simScene({ east: 0, north: 0, yaw: 0 });
+    const agent = new EmbodiedAgent(scene);
+
+    agent.setGoal({ position: { east: 100, north: 0, up: 0 }, label: '东边', tolerance: 3 });
+    for (let i = 0; i < 40; i++) step(agent.update(DT).movement);
+    const yawAfterTurn = agent.update(DT).yaw!;
+    assert.ok(Math.abs(wrapPi(yawAfterTurn - Math.PI / 2)) < 0.05);
+
+    agent.release();
+    // 重新接管，目标还是东边 —— 应该几乎不用再转
+    agent.setGoal({ position: { east: 100, north: 0, up: 0 }, label: '东边', tolerance: 3 });
+    const out = agent.update(DT);
+    assert.ok(out.movement.speedMetersPerSecond > 0,
+        '已经朝东了，不该再站定转身');
+});

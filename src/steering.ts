@@ -58,13 +58,17 @@ export function arriveSpeed(distance: number, tolerance: number, config: AgentCo
  *
  * 返回值直接喂给 playerController.setWorldMovement()。
  * 方向为单位向量（控制器会再归一化，这里保持单位长度让日志更直观）。
+ *
+ * `facingYaw` 传入人物当前朝向时，会启用「先转再走」：
+ * 偏离行进方向太多就先原地转身，不往前滑。不传则退化为纯速度解算
+ * （单元测试和不需要朝向的场景用）。
  */
 export function steerToward(
     pose: Vec3,
     goal: Vec3,
     tolerance: number,
     config: AgentConfig,
-    opts: { run?: boolean; speedOverride?: number } = {},
+    opts: { run?: boolean; speedOverride?: number; facingYaw?: number } = {},
 ): MovementCommand {
     const distance = horizontalDistance(pose, goal);
     if (distance <= tolerance) {
@@ -79,6 +83,16 @@ export function steerToward(
             ? 1
             : (distance - tolerance) / Math.max(config.slowRadius - tolerance, 1e-6);
         speed = config.minSpeed + (config.runSpeed - config.minSpeed) * Math.max(0, Math.min(1, t));
+    }
+    // 先转再走：偏离超过 turnFirstAngle 时速度压到 0（原地转），
+    // 在 [alignAngle, turnFirstAngle] 之间按比例降速，过渡不生硬。
+    if (opts.facingYaw != null) {
+        const offAxis = Math.abs(wrapPi(headingTo(pose, goal) - opts.facingYaw));
+        if (offAxis >= config.turnFirstAngle) speed = 0;
+        else if (offAxis > config.alignAngle) {
+            const t = (offAxis - config.alignAngle) / Math.max(config.turnFirstAngle - config.alignAngle, 1e-6);
+            speed *= Math.max(0, 1 - t);
+        }
     }
     return {
         east: dir.east,

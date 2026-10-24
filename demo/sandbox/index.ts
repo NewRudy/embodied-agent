@@ -79,7 +79,7 @@ const LLM = (import.meta.env.EMBODIED_LLM_ENABLED === '1' || location.search.inc
         baseUrl: '/llm',
         model: import.meta.env.EMBODIED_LLM_MODEL || 'workbuddy-ai/deepseek-v4.1-flash',
         apiKey: 'proxy', // 占位符，仅本地 demo；生产必须换成后端代理
-        timeoutMs: 8000,
+        timeoutMs: 800,
     }
     : false;
 

@@ -19,7 +19,17 @@ export interface LlmDeciderOptions {
     apiKey?: string;
     /** 模型名。 */
     model?: string;
-    /** 超时毫秒，默认 4000。快层不能被慢模型拖死。 */
+    /**
+     * 超时毫秒，默认 800。
+     *
+     * 为什么是 800 而不是 4000：实测本机网关上的非推理模型往返 3.1–4.6 秒，
+     * 4 秒超时等于「几乎每次都会等到超时」，用户体感是「说完话愣了四秒才动」。
+     * 用户的验收线是「说到执行不超过 1 秒」。
+     *
+     * 取舍：明确指令（去3号风机/往东走20米/停）走规则层，约 430ms 完成，
+     * 根本不会到这里；到这里的都是规则层听不懂的模糊说法。
+     * 这类话宁可快速回「没听懂，请再说一次」，也不要把整条链路拖到 4 秒。
+     */
     timeoutMs?: number;
     /** 注入 fetch（测试用）。 */
     fetchImpl?: typeof fetch;
@@ -225,7 +235,7 @@ export class LlmDecider implements IntentDecider {
             baseUrl: baseUrl.replace(/\/+$/, ''),
             apiKey,
             model,
-            timeoutMs: options.timeoutMs ?? 4000,
+            timeoutMs: options.timeoutMs ?? 800,
             // 必须包一层再调。浏览器里 fetch 是 window 的方法，
             // 存成变量再单独调用会丢 this 绑定，报 "Illegal invocation"。
             // Node 里不报，所以单元测试发现不了 —— 这是浏览器验收才抓到的。
