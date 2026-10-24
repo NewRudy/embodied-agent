@@ -27,6 +27,7 @@ import { CONFIDENCE_THRESHOLD, type Intent, type IntentDecider, type ParseContex
 import { LlmDecider, type LlmDeciderOptions } from './llm-decider.ts';
 import { TaskQueue, splitSteps, type TaskStep } from './task-queue.ts';
 import { applyOutput, releaseBody, type BodyLike } from './body.ts';
+import type { LocomotionProfile } from './locomotion.ts';
 import { RealtimeVoice, type VoiceState } from './voice/realtime-voice.ts';
 import { SpeechOutput } from './voice/speech-output.ts';
 import type { VoiceInterruption } from './voice/protocol.ts';
@@ -65,6 +66,14 @@ export interface EmbodiedSceneOptions {
         /** 自定义决策器，会排在规则层之后、模型层之前。 */
         extraDeciders?: IntentDecider[];
     };
+    /**
+     * 移动动画配置。给了才会做动画速度匹配。
+     *
+     * 不给时动画由引擎按 walk/run 二选一播放 —— 那时位移速度和动画速度
+     * 对不上，人物看起来像滑冰。用 tools/measure-stride.ts 量出你模型的
+     * 自然速度后填进来。
+     */
+    locomotion?: LocomotionProfile;
 }
 
 export interface SceneState {
@@ -461,7 +470,7 @@ export function createEmbodiedScene(options: EmbodiedSceneOptions): EmbodiedScen
         if (disposed) return;
         try {
             const out = agent.update(dt);
-            if (options.player) applyOutput(options.player, out);
+            if (options.player) applyOutput(options.player, out, { locomotion: options.locomotion });
 
             // 队列推进必须在到达回调之前 —— 这样「到达并开始下一步」在同一帧内完成，
             // 人物不会在两步之间停一帧。

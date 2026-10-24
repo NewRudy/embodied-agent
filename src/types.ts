@@ -122,6 +122,22 @@ export interface AgentConfig {
     arriveTolerance: number;
     /** 超过该速度自动切跑步。 */
     runThreshold: number;
+    /**
+     * 起步加速度（米/秒²）。默认 12。
+     *
+     * 为什么要有：速度从 0 直接跳到 3.2 m/s 时，人物是「弹射」出去的，
+     * 但动画还停在第一步的起始姿势 —— 两者对不上，看起来像被推着走。
+     * 12 m/s² 让 3.2 m/s 在 0.27 秒内到速，和真人起步接近。
+     *
+     * 设成 Infinity 可关闭（瞬间到速）。
+     */
+    accel: number;
+    /**
+     * 刹车减速度（米/秒²）。默认 20。
+     *
+     * 比 accel 大：真人停下比起步快。设成 Infinity 可关闭。
+     */
+    decel: number;
     /** 转向角速度上限（弧度/秒）。 */
     turnRate: number;
     /**
@@ -163,6 +179,8 @@ export const DEFAULT_CONFIG: AgentConfig = Object.freeze({
     minSpeed: 0.6,
     arriveTolerance: 3,
     runThreshold: 5,
+    accel: 12,                  // 0 → 3.2 m/s 约 0.27 秒
+    decel: 20,                  // 停下比起步快，真人也是这样
     turnRate: Math.PI,          // 180°/s
     // 90°/40°：横着走和掉头先站定转过来；小角度修正边走边转。
     // 90° 这个边界是量出来的 —— 90° 时如果还保持速度，屏幕上就是标准的侧滑。

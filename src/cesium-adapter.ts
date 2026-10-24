@@ -28,6 +28,10 @@ export interface PlayerLike extends BodyLike {
     setScriptedYaw(yaw: number | null): void;
     setFlightMode(enabled: boolean): void;
     getGroundClearanceMeters(): number;
+    /** 按 clip 名播放动画并锁定选择；传 null 解锁。用于动画速度匹配（避免脚打滑）。 */
+    playPlayerAnimationByClipName?(clipName: string | null): void;
+    /** 调整当前动画播放速率。 */
+    setPlayerAnimationTimeScale?(scale: number): void;
     viewer: { scene: { globe: { getHeight: (c: Cartesian3) => number | undefined } } };
 }
 

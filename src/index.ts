@@ -50,7 +50,9 @@ export type {
 
 // —— 施加到角色身体（引擎无关） ——
 export { applyOutput, releaseBody, STOP_MOVEMENT } from './body.ts';
-export type { BodyLike } from './body.ts';
+export type { BodyLike, ApplyOptions } from './body.ts';
+export { locomotionFor, isSpeedOutOfRange } from './locomotion.ts';
+export type { LocomotionClip, LocomotionProfile, LocomotionState, LocomotionOptions } from './locomotion.ts';
 
 // —— 语音 ——
 export { RealtimeVoice, isImmediatePause } from './voice/realtime-voice.ts';

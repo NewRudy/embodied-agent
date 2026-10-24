@@ -364,7 +364,10 @@ test('小角度偏差不打断行走（边走边修）', () => {
 
     const out = agent.update(DT);
     assert.ok(out.movement.speedMetersPerSecond > 0, '小角度偏差不应该让人物停下');
-    assert.equal(out.movement.speedMetersPerSecond, DEFAULT_CONFIG.walkSpeed, '小于 alignAngle 不减速');
+    // 但第一帧受加速度限制，不会直接到全速 —— 跑满 0.5 秒再看
+    let speed = out.movement.speedMetersPerSecond;
+    for (let i = 0; i < 30; i++) speed = agent.update(DT).movement.speedMetersPerSecond;
+    assert.equal(speed, DEFAULT_CONFIG.walkSpeed, '小于 alignAngle 不减速，加速完成后应到全速');
 });
 
 test('中间角度按比例降速，不是突变', () => {
@@ -429,4 +432,60 @@ test('release 后再接管，沿用上次的朝向估计而不是退回 pose.yaw
     const out = agent.update(DT);
     assert.ok(out.movement.speedMetersPerSecond > 0,
         '已经朝东了，不该再站定转身');
+});
+
+// ==================== 加速度平滑 ====================
+//
+// 速度从 0 直接跳到 3.2 m/s 时，人物是「弹射」出去的，
+// 但动画还停在第一步的起始姿势 —— 看起来像被推着走。
+
+test('起步有加速过程，不是瞬间到全速', () => {
+    // 直接朝东起步（初始 yaw=0 是朝北，先转 90° 再走）
+    const { scene } = simScene({ east: 0, north: 0, yaw: Math.PI / 2 });
+    const agent = new EmbodiedAgent(scene);
+    agent.setGoal({ position: { east: 100, north: 0, up: 0 }, label: '东边', tolerance: 3 });
+
+    const speeds: number[] = [];
+    for (let i = 0; i < 40; i++) speeds.push(agent.update(DT).movement.speedMetersPerSecond);
+
+    assert.ok(speeds[0]! < DEFAULT_CONFIG.walkSpeed * 0.5, `第一帧应该还没到全速，实际 ${speeds[0]}`);
+    assert.ok(speeds[39]! === DEFAULT_CONFIG.walkSpeed, '0.67 秒后应该到全速');
+    // 单调递增
+    for (let i = 1; i < speeds.length; i++) assert.ok(speeds[i]! >= speeds[i - 1]!, '加速应该单调');
+});
+
+test('加速时间符合 accel 设定', () => {
+    // accel=12, walkSpeed=3.2 → 3.2/12 ≈ 0.27 秒 ≈ 16 帧
+    const { scene } = simScene({ east: 0, north: 0, yaw: Math.PI / 2 });
+    const agent = new EmbodiedAgent(scene);
+    agent.setGoal({ position: { east: 100, north: 0, up: 0 }, label: '东边', tolerance: 3 });
+
+    let frames = 0;
+    while (agent.update(DT).movement.speedMetersPerSecond < DEFAULT_CONFIG.walkSpeed && frames < 100) frames++;
+    const expected = DEFAULT_CONFIG.walkSpeed / DEFAULT_CONFIG.accel / DT;
+    assert.ok(Math.abs(frames - expected) <= 2, `应该约 ${expected.toFixed(0)} 帧到速，实际 ${frames} 帧`);
+});
+
+test('刹车比起步快（decel > accel）', () => {
+    assert.ok(DEFAULT_CONFIG.decel > DEFAULT_CONFIG.accel, '真人停下比起步快');
+});
+
+test('「停」之后速度立刻归零，不会滑一段', () => {
+    const { scene } = simScene();
+    const agent = new EmbodiedAgent(scene);
+    agent.setGoal({ position: { east: 100, north: 0, up: 0 }, label: '东边', tolerance: 3 });
+    for (let i = 0; i < 60; i++) agent.update(DT); // 跑起来
+    assert.ok(agent.update(DT).movement.speedMetersPerSecond > 0);
+
+    agent.cancel();
+    const after = agent.update(DT);
+    assert.equal(after.movement.speedMetersPerSecond, 0, '取消后不能按上一帧速度继续滑');
+});
+
+test('accel=Infinity 可关闭加速（瞬间到速）', () => {
+    const { scene } = simScene();
+    const agent = new EmbodiedAgent(scene, { config: { accel: Infinity, decel: Infinity } });
+    agent.setGoal({ position: { east: 100, north: 0, up: 0 }, label: '东边', tolerance: 3 });
+    for (let i = 0; i < 40; i++) agent.update(DT); // 转身
+    assert.equal(agent.update(DT).movement.speedMetersPerSecond, DEFAULT_CONFIG.walkSpeed, '关掉加速后第一帧就该全速');
 });

@@ -19,6 +19,7 @@ import { EmbodiedAgent } from '../../src/agent.ts';
 import { parseIntent } from '../../src/intent.ts';
 import { CesiumSceneAdapter, EnuFrame, type PlayerLike } from '../../src/cesium-adapter.ts';
 import { applyOutput } from '../../src/body.ts';
+import type { LocomotionProfile } from '../../src/locomotion.ts';
 import { RealtimeVoice, isImmediatePause } from '../../src/voice/realtime-voice.ts';
 import { SpeechOutput } from '../../src/voice/speech-output.ts';
 import type { Goal, Vec3 } from '../../src/types.ts';
@@ -124,6 +125,24 @@ async function main() {
         up: spawnOffset.up + 3,
     });
 
+    // —— 动画速度匹配 ——
+    //
+    // 这些 naturalSpeed 是**量出来的**，不是估的：
+    //   node tools/measure-stride.ts public/xunjie-assets/glb/UAL1_Standard.glb --height-meters=1.8
+    //
+    // 换模型时必须重新量。数值错了脚就会打滑，而这个很难靠肉眼判断。
+    //
+    // 为什么需要：Walk_Loop 的自然速度约 1.07 m/s，但智能体以 3.2 m/s 走。
+    // 不匹配的话脚在原地倒腾、人往前飘 —— 就是「滑冰」。
+    const LOCOMOTION: LocomotionProfile = {
+        idle: 'Idle_Loop',
+        clips: [
+            { name: 'Walk_Loop', naturalSpeed: 1.065 },
+            { name: 'Jog_Fwd_Loop', naturalSpeed: 2.882 },
+            { name: 'Sprint_Loop', naturalSpeed: 3.621 },
+        ],
+    };
+
     const playerModel: PlayerModelOptions = {
         url: `${ASSET_BASE}${farm.assets.player.glbUrl}`,
         scale: farm.assets.player.scale,
@@ -214,7 +233,7 @@ async function main() {
         last = now;
 
         const out = agent.update(dt);
-        applyOutput(player as unknown as PlayerLike, out);
+        applyOutput(player as unknown as PlayerLike, out, { locomotion: LOCOMOTION });
         player.update();
 
         // 状态变化时写日志 + 播报

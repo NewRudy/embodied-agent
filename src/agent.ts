@@ -15,6 +15,7 @@ import {
     type FailReason,
     type Goal,
     type GoalState,
+    type MovementCommand,
     type SceneAdapter,
     type Vec3,
 } from './types.ts';
@@ -59,6 +60,9 @@ export class EmbodiedAgent {
      */
     private lastYaw: number | null = null;
 
+    /** 上一帧的实际速度，用于加速度爬坡。 */
+    private currentSpeed = 0;
+
     constructor(scene: SceneAdapter, options: AgentOptions = {}) {
         this.scene = scene;
         this.config = { ...DEFAULT_CONFIG, ...options.config };
@@ -101,6 +105,8 @@ export class EmbodiedAgent {
         if (!this.goal) return;
         this.state = 'cancelled';
         this.goal = null;
+        // 取消后速度必须归零，否则「停」之后还会按上一帧的速度滑一段
+        this.currentSpeed = 0;
     }
 
     /** 清空所有状态，交还键鼠控制。 */
@@ -108,6 +114,7 @@ export class EmbodiedAgent {
         this.goal = null;
         this.state = 'idle';
         this.lastPos = null;
+        this.currentSpeed = 0;
         // 注意**不清** lastYaw：它是「身体现在朝哪」的最佳估计。
         // 清成 null 会让下一次接管退回去读不可靠的 pose.yaw。
         this.resetStuck();
@@ -202,9 +209,12 @@ export class EmbodiedAgent {
         // 把当前朝向传进去：偏离目标方向太多时先原地转身再走，
         // 否则转向受 turnRate 限制，前 0.5 秒是「横着滑过去」。
         const currentYaw = this.lastYaw ?? pose.yaw;
-        const movement = steerToward(pose, goal.position, tolerance, this.config, {
+        const steering = steerToward(pose, goal.position, tolerance, this.config, {
             facingYaw: currentYaw,
         });
+        // 速度不能瞬间到位：0 → 3.2 m/s 一步到位会让动画对不上位移，
+        // 看起来像被推着走。这里按 accel/decel 爬坡。
+        const movement = this.rampSpeed(steering, dt);
 
         // —— 朝向：朝行进方向转，受角速度限制 ——
         const targetYaw = Math.atan2(dir.east, dir.north);
@@ -214,6 +224,26 @@ export class EmbodiedAgent {
         base.movement = movement;
         base.yaw = yaw;
         return base;
+    }
+
+    /**
+     * 把目标速度按加速度限制爬坡。
+     *
+     * 加速用 accel，减速用 decel。两者分开是因为真人停下比起步快。
+     * 关键：**减速时方向也要跟着收敛**，否则急停那一帧人物会横着滑一下。
+     */
+    private rampSpeed(target: MovementCommand, dt: number): MovementCommand {
+        const want = target.speedMetersPerSecond;
+        const current = this.currentSpeed;
+        const rate = want > current ? this.config.accel : this.config.decel;
+        let next: number;
+        if (!Number.isFinite(rate)) next = want;
+        else {
+            const maxDelta = rate * dt;
+            next = Math.abs(want - current) <= maxDelta ? want : current + Math.sign(want - current) * maxDelta;
+        }
+        this.currentSpeed = next;
+        return next === want ? target : { ...target, speedMetersPerSecond: next };
     }
 
     private fail(reason: FailReason, base: AgentOutput): AgentOutput {
