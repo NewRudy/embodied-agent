@@ -136,7 +136,7 @@ const agent = new EmbodiedAgent(adapter, { config: { walkSpeed: 5 } });
 agent.setGoal({ position: { east: 300, north: 200, up: 0 }, tolerance: 4 });
 
 // 每帧
-applyOutput(player, agent.update(dt));
+applyOutput(player, agent.update(dt), { locomotion: LOCOMOTION });
 ```
 
 **别只写 `setWorldMovement`。** 位移和动画是两条独立通道：
@@ -144,20 +144,48 @@ applyOutput(player, agent.update(dt));
 只写位移不写按键轴，人物会「滑行」——位移在动，动画恒为 `idle`。
 `applyOutput()` 把两件事一起做了，还负责在无目标时交还键鼠控制。
 
+**想要脚不打滑，再传 `locomotion`：**
+
+```ts
+const LOCOMOTION = {
+    idle: 'Idle_Loop',
+    clips: [
+        { name: 'Walk_Loop',     naturalSpeed: 1.065 },
+        { name: 'Jog_Fwd_Loop',  naturalSpeed: 2.882 },
+        { name: 'Sprint_Loop',   naturalSpeed: 3.621 },
+    ],
+};
+```
+
+`naturalSpeed` 是**量出来的**，不是估的：
+
+```bash
+node tools/measure-stride.ts public/xunjie-assets/glb/UAL1_Standard.glb --height-meters=1.8
+```
+
+不给 `locomotion` 时退回按键轴驱动 —— 能用，但脚会滑。换模型必须重量，
+否则倍速算错，脚照样滑，而且很难靠肉眼判断对错。
+
 ### 引擎无关
 
-`BodyLike` 只有三个方法，任何 3D 引擎都能实现：
+`BodyLike` 只有三个核心方法，任何 3D 引擎都能实现：
 
 ```ts
 interface BodyLike {
     setWorldMovement(m: MovementCommand | null): void;
     setScriptedYaw?(yaw: number | null): void;
     setInput?(input: { moveX?: number; moveY?: number; shift?: boolean }): void;
+    // 想要动画速度匹配才需要下面两个
+    playPlayerAnimationByClipName?(clipName: string | null): void;
+    setPlayerAnimationTimeScale?(scale: number): void;
 }
 ```
 
 `setInput` 是给 `cesium-player-controller` 专用的（它的动画只读按键轴）。
 其他引擎不需要实现它。
+
+`playPlayerAnimationByClipName` 传 `null` 表示**解锁**，把动画选择权交还引擎。
+外部接管时必须能锁 —— 否则引擎每帧按按键重选一次，下发的 clip 立刻被覆盖。
 
 ### SceneAdapter —— 唯一的接缝
 
@@ -393,6 +421,31 @@ ASR 几乎总把「3 号」识别成「三号」，而场景里的 ID 是阿拉�
 
 横着走是最难看的动作，90° 正好是它的边界。
 
+**为什么动画要按速度匹配（脚不打滑）**
+
+位移和动画是**两条独立通道**：位移由 `setWorldMovement` 驱动，
+动画由 `AnimationSystem` 按键盘状态在 `walking` / `running` 里二选一。
+不管位移多快，动画都按 clip 自己的固定节奏播 —— 人物以 5 m/s 位移、
+脚却按 1.07 m/s 倒腾，就是滑冰。
+
+修法只有一条：`timeScale = 实际速度 / clip 的自然速度`。
+
+难点在「自然速度」怎么来。估出来的数差 20%，脚就明显滑；而且这个很难靠肉眼判断。
+所以写了 `tools/measure-stride.ts`，从 GLB 骨骼读脚的前后摆幅 ÷ 循环时长：
+
+```
+Walk_Loop        1.333s  步幅 0.722  自然速度 1.065 m/s
+Jog_Fwd_Loop     0.917s  步幅 1.342  自然速度 2.882 m/s
+Sprint_Loop      0.667s  步幅 1.226  自然速度 3.621 m/s
+```
+
+选片规则是「挑自然速度不超过当前速度的最大 clip」，不是「挑最接近的」。
+5 m/s 时 Walk 要 4.7 倍速（一眼假），Jog 只要 1.7 倍 —— 宁可略快，不要快进。
+
+倍速夹在 [0.5, 2.0]：再慢像太空步，再快像快放。超出范围时宁可留一点滑。
+
+**换模型必须重新量。** 这就是 `measure-stride` 存在的理由。
+
 **响应速度**
 
 | 环节 | 实测 | 说明 |
@@ -415,9 +468,10 @@ ASR 几乎总把「3 号」识别成「三号」，而场景里的 ID 是阿拉�
 
 | 层 | 内容 | 状态 |
 |---|---|---|
-| 单元测试 | 178 项：运动收敛、减速曲线、反射、意图、置信度、模型校验、多步队列、回声过滤、帧编解码、数字归一 | ✅ 通过 |
+| 单元测试 | 206 项：运动收敛、减速曲线、反射、意图、置信度、模型校验、多步队列、回声过滤、帧编解码、数字归一、动画速度匹配 | ✅ 通过 |
 | 构建 | `vite build` 成功 | ✅ 通过 |
 | 浏览器 | 目标驱动、中途修正、变速、到达、停止、动画跟随 | ✅ 通过 |
+| 浏览器 | 动画速度匹配：实测 4.775 m/s ↔ 动画隐含 5.000 m/s，clip 随速度切 Walk→Jog→Sprint | ✅ 通过 |
 | 浏览器 | 语音服务 → 转写 → 意图 → 动作（假 ASR 上游） | ✅ 通过 |
 | 浏览器 | 回声过滤、播报中喊停穿透 | ✅ 通过 |
 | 浏览器 | 模型意图层兜底（规则低置信 → 模型命中 → 人物走过去） | ✅ 通过 |
@@ -434,6 +488,10 @@ ASR 几乎总把「3 号」识别成「三号」，而场景里的 ID 是阿拉�
 
 - 第三人称相机在陡坡上会被射线避障压到 0.5 米，可用滚轮拉远
 - 没有寻路/避障，只有直线 seek + 悬崖停止。遇到障碍物会卡住，由 `STUCK` 兜底
+- 动画速度匹配只验证了 `UAL1_Standard.glb`。换模型必须先跑 `measure-stride` 重量，
+  否则倍速算错、脚照滑，而且肉眼很难判断
+- 倍速上限 2.0，超过约 7.2 m/s 时脚会轻微打滑（物理上限 12 m/s 之前就会到）
+- 转向时速度归零，视觉上是「站住、转身、走」而不是「边走边转」，代价是转向多花 0.3~0.5 s
 - 出生点在运维点上方 3 米，靠重力落地约需 10 秒。**落地前下指令，人物会在空中「走」**，
   自动演示已加落地等待
 - TTS 用浏览器本地 `speechSynthesis`，音色取决于操作系统
@@ -459,6 +517,7 @@ src/
   intent-types.ts     意图契约（可插拔决策器）
   llm-decider.ts      模型决策层（有界选择 + 严格校验）
   task-queue.ts       多步任务编排
+  locomotion.ts       动画速度匹配（选 clip + 算倍速，脚不打滑）
   body.ts             把运动量施加到角色（引擎无关）
   cesium-adapter.ts   Cesium 适配器 + 数字归一
   create-scene.ts     一站式装配
@@ -476,7 +535,9 @@ server/
 public/voice/
   pcm-capture.js      AudioWorklet（16k 重采样分帧）
 examples/minimal/     最小可运行示例（纯 Node）
-test/                 178 项测试
+tools/
+  measure-stride.ts   从 GLB 量 clip 的自然速度（换模型必须跑）
+test/                 206 项测试
 test/live/            打真实模型的冒烟测试（不进 npm test）
 .github/workflows/    CI：Node 22.9 + 24 上跑 typecheck + 全部测试
 demo/wind/            风机场景演示

@@ -484,3 +484,96 @@ node --test test/live/llm.test.ts
 
 **为什么必须有**：解码器会一直 `Buffer.concat` 直到够一帧。原来只有
 `> Number.MAX_SAFE_INTEGER`（9PB）的检查，形同虚设 —— 一个声明 1GB 的帧头就能把进程拖到 OOM。
+
+---
+
+## L12 动画速度匹配（脚不打滑）· 通过（2026-10-23/24）
+
+### 问题
+
+位移由 `setWorldMovement` 驱动，动画由 `AnimationSystem.setAnimationByPressed()`
+按键盘状态二选一（`walking` / `running`）。**两条通道互不相干**：
+人物以 5 m/s 位移，脚却按 1.07 m/s 的节奏倒腾 —— 视觉上就是滑冰。
+
+这不是「动作不够多」，是「动画速度和位移速度没对上」。
+
+### 做法
+
+| 步骤 | 做法 | 为什么 |
+|---|---|---|
+| 量自然速度 | `tools/measure-stride.ts` 从 GLB 骨骼读脚的前后摆幅 ÷ 循环时长 | 估出来的数会差 20%，脚就滑 |
+| 选 clip | 挑「自然速度不超过当前速度的最大 clip」 | 5 m/s 用 Walk 要 4.7 倍速，一眼假 |
+| 算倍速 | `timeScale = 实际速度 / 自然速度`，夹在 [0.5, 2.0] | 超出范围宁可留一点滑，也不做快进/太空步 |
+| 下发 | `playPlayerAnimationByClipName` + `setPlayerAnimationTimeScale` | 引擎侧需要新接口 |
+| 锁定 | 外部接管时 `setAnimationByPressed()` 直接返回 | 否则每帧被按键状态改回 idle |
+
+### 实测自然速度（`UAL1_Standard.glb`，身高按 1.8 m）
+
+```
+Walk_Loop        1.333s  步幅 0.722  自然速度 1.065 m/s
+Jog_Fwd_Loop     0.917s  步幅 1.342  自然速度 2.882 m/s
+Sprint_Loop      0.667s  步幅 1.226  自然速度 3.621 m/s
+```
+
+复现：
+```bash
+node tools/measure-stride.ts public/xunjie-assets/glb/UAL1_Standard.glb --height-meters=1.8
+```
+
+**换模型必须重量。** 数值错了脚会打滑，而这个很难靠肉眼判断 —— 只能靠算。
+
+### 浏览器验收（真实场景，非单元测试）
+
+指令 5 m/s，跑到 1 号风机，采样 4 秒：
+
+```
+物理累计时长   3.864 s      （player.currentDelta 累加）
+实际位移      18.45 m
+实测速度       4.775 m/s    （含起步加速段，低于 5 合理）
+指令速度       5.000 m/s
+当前 clip      Sprint_Loop
+timeScale      1.381
+动画隐含速度   1.381 × 3.621 = 5.000 m/s   ← 与指令速度一致
+```
+
+**判据是「动画隐含速度 == 实测速度」**，不是「看起来像在跑」。
+两者一致 = 脚落地的瞬间相对地面静止 = 不打滑。
+
+### 一个采样陷阱（差点误判）
+
+第一次测出 2.23 m/s，以为速度不够。实际是 `playerController.update()` 里
+`delta = Math.min(delta, 1/30)`，而后台标签页 rAF 被节流到 1~7 fps。
+用墙钟时间当分母会低估速度。**必须用物理自己消费的 `currentDelta` 当分母。**
+
+### 配套的上游改动
+
+在 `cesium-player-controller`（分支 `codex/realtime-voice-control`）：
+
+1. `playByClipName(clipName)` —— 语义键只有两档，不够选 Jog
+2. `setExternalControl(clipName | null)` —— 外部锁定，按键不再覆盖
+3. `setTimeScale(scale)` —— 改倍速要重建 runtime（闭包捕获旧值），
+   用 `rebuildingRuntime` 标记避免 `onAnimFinished` 误判成「播完了」
+
+### 边界
+
+- 只验证了 `UAL1_Standard.glb` 一个模型。其他模型必须先跑 `measure-stride`
+- 倍速上限 2.0，超过 7.24 m/s 时脚仍会轻微打滑（物理上限 12 m/s 之前）
+- 转身时速度归零 → clip 回到 idle → 转完再起步。视觉上是「站住、转身、走」，
+  不是「边走边转」。这是有意的取舍，代价是转向耗时约 0.3~0.5 s
+
+---
+
+## L13 响应速度 · 通过（2026-10-23）
+
+| 环节 | 实测 | 说明 |
+|---|---|---|
+| ASR 说完 → 定稿 | 415 ms | 豆包流式，真实网络 |
+| 规则层解析 | 0.02 ms | 纯本地正则 |
+| **合计到开始执行** | **≈ 430 ms** | 在 1 秒线内 |
+
+模型兜底（`workbuddy-ai/deepseek-v4.1-flash`）实测 **3.1~4.6 s**，
+远超人可接受的等待。已把超时砍到 **800 ms**：超时直接放弃，走规则层的
+「没听懂」路径，不让用户干等。
+
+同时加了「先转再走」：偏离目标 ≥90° 时先停下转身，40°~90° 之间线性降速。
+原来 120° 的阈值会落在中间带，产生 1.2 m/s 的侧向平移 —— 最难看的一种。
