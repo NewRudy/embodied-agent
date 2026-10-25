@@ -109,7 +109,10 @@ test('直线目标：从 (0,0) 走到 (50,0)，最终到达', () => {
     }
     assert.equal(out.state, 'arrived');
     assert.ok(horizontalDistance(pose, { east: 50, north: 0, up: 0 }) <= 2.5);
-    assert.ok(frames < 60 * 30, `走 50 米用了 ${frames} 帧，太慢`);
+    // 上限按真实步行速度算：50 m ÷ 1.4 m/s ≈ 36 秒，留 1.5 倍余量。
+    // 写死帧数会在调速度时假失败 —— 这条测的是「能走到」，不是「走多快」。
+    const budget = Math.ceil((50 / DEFAULT_CONFIG.walkSpeed) * 60 * 1.5);
+    assert.ok(frames < budget, `走 50 米用了 ${frames} 帧，超过 ${budget} 帧预算`);
 });
 
 test('斜向目标：能到达任意方向的目标点', () => {

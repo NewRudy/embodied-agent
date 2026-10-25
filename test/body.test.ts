@@ -63,19 +63,28 @@ test('有 locomotion 配置时按速度选 clip 并设倍速', () => {
     assert.ok(Math.abs((s[0] as number) - 3.2 / 2.882) < 1e-9);
 });
 
-test('速度变化超过 1% 时重新下发倍速', () => {
+test('速度变化超过 5% 时重新下发倍速', () => {
     const { body, calls } = fakeBody();
     applyOutput(body, output(3.2), { locomotion: PROFILE }); // Jog 1.11x
-    applyOutput(body, output(3.5), { locomotion: PROFILE }); // 仍在 Jog，1.21x
+    applyOutput(body, output(3.5), { locomotion: PROFILE }); // 仍在 Jog，1.21x（+9%）
     assert.deepEqual(clips(calls), ['Jog_Fwd_Loop'], '同一个 clip 不该重复 playByName');
     assert.equal(scales(calls).length, 2, '倍速应该更新');
 });
 
-test('速度变化小于 1% 时不重复下发（避免每帧重建动画）', () => {
+test('速度变化小于 5% 时不重复下发（避免每帧重建动画）', () => {
     const { body, calls } = fakeBody();
     applyOutput(body, output(3.2), { locomotion: PROFILE });
-    applyOutput(body, output(3.21), { locomotion: PROFILE });
+    applyOutput(body, output(3.21), { locomotion: PROFILE }); // +0.3%
     assert.equal(scales(calls).length, 1, '微小变化应该跳过');
+});
+
+test('4% 变化也跳过：加速阶段每帧都会涨一点，不能每帧重建', () => {
+    // 12 m/s² 加速、60fps → 每帧 +0.2 m/s。3.2→3.33 是 +4%，
+    // 若按 1% 阈值判定，加速那半秒里几乎每帧都重建 runtime。
+    const { body, calls } = fakeBody();
+    applyOutput(body, output(3.2), { locomotion: PROFILE });
+    applyOutput(body, output(3.33), { locomotion: PROFILE }); // +4%
+    assert.equal(scales(calls).length, 1, '4% 变化应该跳过');
 });
 
 test('跨 clip 时切换动画', () => {

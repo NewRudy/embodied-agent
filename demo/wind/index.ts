@@ -219,7 +219,12 @@ async function main() {
 
     const agent = new EmbodiedAgent(adapter, {
         origin: { east: spawnOffset.east, north: spawnOffset.north, up: spawnOffset.up },
-        config: { walkSpeed: 5, runSpeed: 9, boundsRadius: 1500 },
+        // 走 1.4 / 跑 3.6：这是真人速度，也是 Walk_Loop / Jog_Fwd_Loop 的自然速度附近。
+        //
+        // 之前写的是 5 / 9。5 m/s 是竞走速度 —— 动画匹配会选中 Sprint_Loop，
+        // 于是「走」的时候人在做冲刺动作，看起来就是「动画不对」。
+        // 速度选对了，动画自然就对；不要靠调倍速去迁就一个错误的速度。
+        config: { walkSpeed: 1.4, runSpeed: 3.6, boundsRadius: 1500 },
     });
 
     // —— 每帧驱动 ——
@@ -529,7 +534,9 @@ async function main() {
     document.getElementById('demoBtn')?.addEventListener('click', () => runDemo());
 
     log('就绪。输入「去3号风机」「往前走20米」「往左一点」「停」试试，或点「自动演示」。');
-    (window as any).__agent = { agent, player, adapter, runDemo, handleCommand, voice, speech };
+    // applyOutput 一起导出：自动化验收需要手动逐帧驱动，
+    // 只调 agent.update 而不施加输出的话，人物不会动（worldMovement 一直是 null）。
+    (window as any).__agent = { agent, player, adapter, runDemo, handleCommand, voice, speech, applyOutput, LOCOMOTION };
 }
 
 main().catch((e) => {

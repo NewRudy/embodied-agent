@@ -173,13 +173,17 @@ export interface AgentConfig {
 }
 
 export const DEFAULT_CONFIG: AgentConfig = Object.freeze({
-    walkSpeed: 3.2,
-    runSpeed: 6.5,
+    // 1.4 / 3.6：真人步行与慢跑速度。
+    //
+    // 以前是 3.2 / 6.5 —— 那是竞走和冲刺。配合动画速度匹配会选中
+    // Jog/Sprint，于是「走」的时候人在冲刺。速度选对，动画自然对。
+    walkSpeed: 1.4,
+    runSpeed: 3.6,
     slowRadius: 12,
     minSpeed: 0.6,
     arriveTolerance: 3,
-    runThreshold: 5,
-    accel: 12,                  // 0 → 3.2 m/s 约 0.27 秒
+    runThreshold: 2.4,
+    accel: 12,                  // 0 → 1.4 m/s 约 0.12 秒
     decel: 20,                  // 停下比起步快，真人也是这样
     turnRate: Math.PI,          // 180°/s
     // 90°/40°：横着走和掉头先站定转过来；小角度修正边走边转。

@@ -121,9 +121,14 @@ export function applyOutput(body: BodyLike, out: AgentOutput, options: ApplyOpti
             body.playPlayerAnimationByClipName?.(state.clip);
             lastClip.set(body, state.clip);
         }
-        // 倍速每帧都可能有微小变化，只在变化超过 1% 时才写，减少无谓调用
+        // 倍速每帧都可能有微小变化，只在变化超过 5% 时才写，减少无谓调用。
+        //
+        // 为什么是 5% 而不是 1%：每次改倍速都要重建 Cesium 的 runtime。
+        // 加速阶段速度每帧涨 0.2 m/s（12 m/s² ÷ 60fps），1% 阈值意味着
+        // 几乎每帧都重建 —— 即使续上了相位，也白白打断动画采样。
+        // 5% 意味着每约 4~5 帧写一次，肉眼分辨不出 5% 的脚步快慢差异。
         const prev = lastTimeScale.get(body) ?? 1;
-        if (Math.abs(state.timeScale - prev) > prev * 0.01) {
+        if (Math.abs(state.timeScale - prev) > prev * 0.05) {
             body.setPlayerAnimationTimeScale?.(state.timeScale);
             lastTimeScale.set(body, state.timeScale);
         }

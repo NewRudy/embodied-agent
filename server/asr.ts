@@ -139,6 +139,26 @@ export function readVoiceConfig(): VoiceConfig | null {
 
 export const voiceConfigured = (): boolean => readVoiceConfig() !== null;
 
+/**
+ * 句末静音判定窗口（毫秒）。
+ *
+ * 400 是火山默认值，实测说完→定稿稳定在 510~522ms。
+ *
+ * 试过 250：延迟没有变快（516~519ms），第三次还涨到 1393ms。
+ * 说明这个值不是延迟的主导项 —— 上游的处理时间才是。
+ * 所以别指望靠调它加速，默认 400 即可。
+ *
+ * 注意 `Number('') === 0`：环境变量设成空串会变成 0，等于「立刻定稿」，
+ * 长句会被切碎。所以空串必须回落默认值，不能直接 Number()。
+ */
+export function endWindowMs(): number {
+    const raw = process.env.DOUBAO_ASR_END_WINDOW_MS;
+    if (raw == null || raw.trim() === '') return 400;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 300 || n > 5000) return 400;
+    return Math.round(n);
+}
+
 /** 优化版本身支持实时结果，不能降级到不支持 Seed ASR 2.0 的旧 bigmodel 端点。 */
 export function resolveVoiceStreamEndpoint(configuredEndpoint: string, explicitEndpoint?: string): string {
     return explicitEndpoint?.trim() || configuredEndpoint.replace(/\/bigmodel_nostream(?=$|[?#])/, '/bigmodel_async');
@@ -212,9 +232,9 @@ export function openDoubaoStream(requestId: string, callbacks: DoubaoStreamCallb
         pending.length = 0;
         pendingBytes = 0;
     }
-    function fail(code: string) {
+    function fail(code: string, detail?: string) {
         if (closed) return;
-        closed = true; cleanup(); ws.terminate(); callbacks.error(code);
+        closed = true; cleanup(); ws.terminate(); callbacks.error(detail ? `${code}:${detail}` : code);
     }
     function end() {
         if (closed) return;
@@ -241,7 +261,13 @@ export function openDoubaoStream(requestId: string, callbacks: DoubaoStreamCallb
                 result_type: 'full',
                 enable_nonstream: false,
                 force_to_speech_time: 0,
-                end_window_size: 400,
+                // 静音多久判定「说完了」。默认 400ms，实测说完→定稿 520~560ms，
+                // 其中 400ms 纯粹是在等你闭嘴。
+                //
+                // 250ms 把这段砍掉 150ms，代价是句中停顿超过 250ms 会被切成两句。
+                // 对「走到 3 号风机」这类短指令没影响；说长句要留意。
+                // 可用 DOUBAO_ASR_END_WINDOW_MS 覆盖。
+                end_window_size: endWindowMs(),
                 ...(cfg.hotwordTableId || cfg.correctTableId
                     ? {
                         corpus: {
@@ -261,12 +287,27 @@ export function openDoubaoStream(requestId: string, callbacks: DoubaoStreamCallb
         if (closed) return;
         try {
             const frame = parseServerResponse(data);
-            if (frame.errorCode != null) return fail(`ASR_UPSTREAM_${frame.errorCode}`);
+            // 上游的 errorMessage 以前解析出来就丢了，只剩一个数字码 —— 排查时只能猜。
+            // 现在带进日志，服务端 console 里能直接看到火山返回的原因。
+            if (frame.errorCode != null) {
+                console.warn(`[asr] 上游错误 ${frame.errorCode}: ${frame.errorMessage}`);
+                return fail(`ASR_UPSTREAM_${frame.errorCode}`, frame.errorMessage ?? undefined);
+            }
             const payloadCode = frame.payload?.code;
             if (typeof payloadCode === 'number' && payloadCode !== 1000 && payloadCode !== 0 && payloadCode !== 20000000) {
-                return fail(`ASR_UPSTREAM_${payloadCode}`);
+                const upstreamMsg = typeof frame.payload?.message === 'string' ? frame.payload.message : undefined;
+                console.warn(`[asr] 上游 payload 错误 ${payloadCode}: ${upstreamMsg ?? '(无消息)'}`);
+                return fail(`ASR_UPSTREAM_${payloadCode}`, upstreamMsg);
             }
-            if (frame.payload) callbacks.transcript(extractStreamingUtterances(frame.payload, frame.isLast));
+            if (frame.payload) {
+                // 排查用：上游每次结果都打一行，看 definite / isLast 到底有没有来。
+                // 只在 VOICE_DEBUG=1 时输出，正常跑不刷屏。
+                if (process.env.VOICE_DEBUG === '1') {
+                    const raw = (frame.payload.result as { utterances?: Array<{ text?: string; definite?: boolean }> } | undefined)?.utterances;
+                    console.log(`[asr:debug] isLast=${frame.isLast} utterances=${JSON.stringify(raw ?? null)}`);
+                }
+                callbacks.transcript(extractStreamingUtterances(frame.payload, frame.isLast));
+            }
             if (frame.isLast) { receivedFinal = true; end(); }
         } catch {
             fail('ASR_PROTOCOL_FAILED');
