@@ -32,6 +32,12 @@ export interface PlayerLike extends BodyLike {
     playPlayerAnimationByClipName?(clipName: string | null): void;
     /** 调整当前动画播放速率。 */
     setPlayerAnimationTimeScale?(scale: number): void;
+    /** 当前动画语义键（调试/UI 用）。 */
+    getCurrentPlayerAnimationName?(): string | null;
+    /** 每帧推进物理与动画。playerController 不自己跑主循环。 */
+    update?(delta?: number): void;
+    /** 立刻刹停水平运动（停止指令用，避免惯性滑一段）。 */
+    stopHorizontalMotion?(): void;
     viewer: { scene: { globe: { getHeight: (c: Cartesian3) => number | undefined } } };
 }
 
@@ -72,17 +78,31 @@ export class EnuFrame {
         );
     }
 
-    /** ENU 位置处的地表高度（相对原点的 up 分量）。无法判定返回 null。 */
+    /**
+     * ENU 位置处的地表高度（相对原点的 up 分量）。无法判定返回 null。
+     *
+     * 注意两个坑：
+     * 1. `globe.getHeight()` 返回的是**绝对椭球高**，不是相对原点的偏移。
+     *    原来把入参 ecef（up=0 的那个点）再转回 ENU，等于恒返回 0。
+     *    必须用返回的高度重新构造 ECEF 再转。
+     * 2. 场景用 3D Tiles 当地形时，globe 上根本没有地形数据，
+     *    getHeight 会返回 undefined 或椭球面高度 —— 这时只能返回 null，
+     *    由调用方（比如出生点解算）自己决定退路。
+     */
     surfaceHeightAt(viewer: PlayerLike['viewer'], east: number, north: number): number | null {
         const globe = viewer.scene.globe;
         if (!globe) return null;
-        // globe 未就绪时 getHeight 会抛 DeveloperError（"left is required"），
-        // 必须吞掉：探测失败只让反射层放弃判断，不应中断运动解算。
         try {
-            const ecef = this.toEcef({ east, north, up: 0 });
-            const h = globe.getHeight(ecef);
+            const base = this.toEcef({ east, north, up: 0 });
+            const h = globe.getHeight(base);
             if (h == null || !Number.isFinite(h)) return null;
-            return this.toEnu(ecef).up;
+            // h 是椭球高。相对原点的 up = h - originEllipsoidHeight。
+            // 用 ECEF 重算能自动处理椭球曲率，比直接相减准。
+            const onSurface = this.C.Cartesian3.clone(base);
+            this.C.Cartesian3.normalize(onSurface, onSurface);
+            this.C.Cartesian3.multiplyByScalar(onSurface, h, onSurface);
+            const local = this.toEnu(onSurface);
+            return Number.isFinite(local.up) ? local.up : null;
         } catch {
             return null;
         }
