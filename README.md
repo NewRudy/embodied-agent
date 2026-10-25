@@ -215,6 +215,76 @@ new EnuFrame(originEcef, { Cartesian3, Matrix4, Transforms });
 三个方法。实现这三个，就能接到任意 3D 场景。
 Cesium 的现成实现见 `src/cesium-adapter.ts`。
 
+### 接一个新 Cesium 场景：只写配置，不写逻辑
+
+`setupCesiumScene()` 把场景专属的东西收成一个对象。它负责三件容易写错的事：
+
+1. **建 ENU 坐标系**（原点 + 换算）
+2. **建人物**并完成 `init`
+3. **实测出生点地面高度** —— 别信配置里的 `up`
+
+```ts
+import { setupCesiumScene } from 'embodied-agent/cesium';
+import { createEmbodiedScene } from 'embodied-agent';
+
+const setup = await setupCesiumScene({
+    viewer,
+    origin: { lon: 106.6, lat: 26.4, heightM: 1200 },
+    cesium: { Cartesian3, Matrix4, Transforms, fromDegrees: Cartesian3.fromDegrees },
+    // 只有 east/north 可信。up 会被物理实测覆盖。
+    spawn: { east: 200, north: 240, up: 148 },
+    references: [
+        { name: '3号风机', at: { east: 420, north: 180, up: 150 },
+          aliases: ['风机3', '3号机组'], description: '白色风力发电机' },
+    ],
+    getPhysics: (p) => p.physics,
+    log: console.log,
+    async createPlayer({ viewer, spawn }) {
+        const player = new playerController();
+        await player.init({ viewer, initPos: spawn, /* 模型、碰撞体… */ });
+        return player;
+    },
+});
+
+const scene = createEmbodiedScene({
+    adapter: setup.adapter,
+    player: setup.player,
+    locomotion: LOCOMOTION,
+});
+```
+
+**`up` 为什么不可信。** 场景资产里的 `up` 经常是设计标高、椭球高、或者手填的。
+实测的 `farm.json` 写 `up: 148`，实际地面在 `up: -33.9` —— 差 182 米。
+照配置出生，人物从 151 米高处自由落体 4 秒才落地。
+这个错误不报错、不崩溃，只是第一眼很难看 —— 而「任意场景即插即用」的
+第一眼恰恰最重要。
+
+`setupCesiumScene` 会把角色瞬移到目标位置、读「脚下到地面的距离」，
+反推出真实地面高度，然后把角色放上去：
+
+```
+📍 地面实测 up=-33.9（配置写 148.0，差 -182 米，已纠正）
+```
+
+这行日志是**诊断**：差值大说明场景资产写错了，值得回头改。
+探不到地面时退回配置值并打警告，不会崩。
+
+**引擎需要提供什么：** `reset(ecef)` + `getGroundClearanceMeters()`。
+`playerController` 两个都有。都没有时退回射线探测 —— 但射线在 3D Tiles
+山体上实测全部落空，所以基本等于「退回配置值」。
+
+**三个坑**（都实测过，换引擎时会重新踩）：
+
+- Rapier 的 `queryPipeline` 只在 `world.step()` 里重建。`init` 之后没步进过，
+  此刻射线对**任何位置**都返回 `Infinity`。必须先补一步再探测。
+- `getGroundClearanceMeters()` 内部是 `groundDistance(200)`，只往脚下打 200 米。
+  从高处直接测必然失败，要逐级下探。
+- 瞬移测距算出来的**已经是站立高度**，不能再额外抬高。抬 1 米就超过
+  离地判定阈值（约 1.5 米），人物反而会掉一下。
+
+完整可运行的最小例子见 `demo/sandbox/`（无 Cesium、无资产）和
+`demo/wind/`（真实 3D Tiles 场景）。
+
 ---
 
 ## 意图层：规则 + 模型
@@ -468,7 +538,7 @@ Sprint_Loop      0.667s  步幅 1.226  自然速度 3.621 m/s
 
 | 层 | 内容 | 状态 |
 |---|---|---|
-| 单元测试 | 206 项：运动收敛、减速曲线、反射、意图、置信度、模型校验、多步队列、回声过滤、帧编解码、数字归一、动画速度匹配 | ✅ 通过 |
+| 单元测试 | 226 项：运动收敛、减速曲线、反射、意图、置信度、模型校验、多步队列、回声过滤、帧编解码、数字归一、动画速度匹配、出生点解算 | ✅ 通过 |
 | 构建 | `vite build` 成功 | ✅ 通过 |
 | 浏览器 | 目标驱动、中途修正、变速、到达、停止、动画跟随 | ✅ 通过 |
 | 浏览器 | 动画速度匹配：实测 4.775 m/s ↔ 动画隐含 5.000 m/s，clip 随速度切 Walk→Jog→Sprint | ✅ 通过 |
@@ -476,6 +546,7 @@ Sprint_Loop      0.667s  步幅 1.226  自然速度 3.621 m/s
 | 浏览器 | 回声过滤、播报中喊停穿透 | ✅ 通过 |
 | 浏览器 | 模型意图层兜底（规则低置信 → 模型命中 → 人物走过去） | ✅ 通过 |
 | 浏览器 | 多步任务（A→B→C 三步连续，约 600 米） | ✅ 通过 |
+| 浏览器 | 出生点自动贴地（配置 up 差 182 米，实测纠正，加载即落地） | ✅ 通过 |
 | 集成 | 全新项目 `npm install`，无 Cesium 下多步任务/模型降级均可用 | ✅ 通过 |
 
 **未验证**：
@@ -492,8 +563,6 @@ Sprint_Loop      0.667s  步幅 1.226  自然速度 3.621 m/s
   否则倍速算错、脚照滑，而且肉眼很难判断
 - 倍速上限 2.0，超过约 7.2 m/s 时脚会轻微打滑（物理上限 12 m/s 之前就会到）
 - 转向时速度归零，视觉上是「站住、转身、走」而不是「边走边转」，代价是转向多花 0.3~0.5 s
-- 出生点在运维点上方 3 米，靠重力落地约需 10 秒。**落地前下指令，人物会在空中「走」**，
-  自动演示已加落地等待
 - TTS 用浏览器本地 `speechSynthesis`，音色取决于操作系统
 
 **尚未做**：
@@ -520,7 +589,9 @@ src/
   locomotion.ts       动画速度匹配（选 clip + 算倍速，脚不打滑）
   body.ts             把运动量施加到角色（引擎无关）
   cesium-adapter.ts   Cesium 适配器 + 数字归一
-  create-scene.ts     一站式装配
+  cesium-scene.ts     Cesium 场景装配（ENU、人物、出生点实测、参照物）
+  spawn.ts            出生点解算（别信配置高度，用物理实测）
+  create-scene.ts     一站式装配（引擎无关）
   voice/
     protocol.ts       语音协议类型
     realtime-voice.ts 浏览器侧语音客户端
@@ -537,7 +608,7 @@ public/voice/
 examples/minimal/     最小可运行示例（纯 Node）
 tools/
   measure-stride.ts   从 GLB 量 clip 的自然速度（换模型必须跑）
-test/                 206 项测试
+test/                 226 项测试
 test/live/            打真实模型的冒烟测试（不进 npm test）
 .github/workflows/    CI：Node 22.9 + 24 上跑 typecheck + 全部测试
 demo/wind/            风机场景演示
