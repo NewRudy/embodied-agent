@@ -27,6 +27,7 @@
     "files": [
         "dist",
         "README.md",
+        "VOICE-CHECKLIST.md",
         "ACCEPTANCE.md",
         "LICENSE"
     ],

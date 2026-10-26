@@ -12,6 +12,9 @@
 > **状态**：`0.1.0`，未发布到 npm。当前通过 git 安装。
 > 已验证的范围与证据层级见 [`ACCEPTANCE.md`](ACCEPTANCE.md) —— 请按那份文档判断可用性，
 > 不要按这个 README 的宣传语判断。
+>
+> **真人语音还没验证过。** 已验到 Chrome 假音频 + 真实豆包 ASR 全链路
+> （见 L15），差声学输入这一步。自己跑一遍用 [`VOICE-CHECKLIST.md`](VOICE-CHECKLIST.md)。
 
 ---
 
