@@ -24,10 +24,15 @@ export default defineConfig({
         CESIUM_BASE_URL: JSON.stringify(CESIUM_BASE),
     },
     resolve: {
-        // 直接用源码，避免依赖已发布的 dist
-        alias: {
-            'cesium-player-controller': '/Users/rudy/Documents/ChatGPT/GuikeSong/player-demo/src/index.ts',
-        },
+        // 默认用 npm 装好的 cesium-player-controller（不设 alias，走正常的模块解析）。
+        // 本机开发时可以用 PLAYER_CONTROLLER_SRC 指向源码目录，避免每次改它都要重新发包：
+        //   PLAYER_CONTROLLER_SRC=/path/to/player-demo/src/index.ts npm run dev
+        //
+        // 注意：alias 的值是包名时 vite 会当成文件路径去 open，报
+        // `ENOENT ... open 'cesium-player-controller'`。所以默认必须不设 alias。
+        ...(process.env.PLAYER_CONTROLLER_SRC
+            ? { alias: { 'cesium-player-controller': process.env.PLAYER_CONTROLLER_SRC } }
+            : {}),
     },
     build: {
         outDir: 'dist',
