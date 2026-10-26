@@ -64,7 +64,8 @@
         "build:lib": "tsup",
         "voice": "node --env-file-if-exists=.env server/index.ts",
         "voice:check": "node -e \"import('./server/asr.ts').then(m=>console.log(m.voiceConfigured()?'ASR 已配置':'ASR 未配置'))\"",
-        "check": "npm run typecheck && npm test"
+        "check": "npm run typecheck && npm test",
+        "prepare": "npm run build:lib"
     },
     "devDependencies": {
         "@types/node": "^22.20.5",

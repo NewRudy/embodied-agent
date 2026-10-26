@@ -1,24 +1,32 @@
 # 具身智能体（Embodied Agent）
 
+[![CI](https://github.com/NewRudy/embodied-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/NewRudy/embodied-agent/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 给 `cesium-player-controller` 这类「有身体」的 3D 角色，加一层**目标驱动**的自主运动能力，
 外加**语音全双工**控制。
 
 说一句「去 3 号风机」，人物自己走过去；走到一半说「往左一点」，它平滑偏过去，**不会停下来重算**。
 说话时它也在回话，你随时可以打断它。
 
+> **状态**：`0.1.0`，未发布到 npm。当前通过 git 安装。
+> 已验证的范围与证据层级见 [`ACCEPTANCE.md`](ACCEPTANCE.md) —— 请按那份文档判断可用性，
+> 不要按这个 README 的宣传语判断。
+
 ---
 
 ## 别人怎么引入这个包
 
 ```bash
-npm install embodied-agent
+# 尚未发布到 npm，先这样装：
+npm install github:NewRudy/embodied-agent
 ```
 
 包分成三个入口，按需引入 —— **不用 Cesium 的人不会被强制打包 4MB Cesium**：
 
 ```ts
 import { createEmbodiedScene } from 'embodied-agent';          // 核心，零依赖
-import { EnuFrame } from 'embodied-agent/cesium';              // Cesium 适配器
+import { setupCesiumScene } from 'embodied-agent/cesium';      // Cesium 场景装配
 import { attachVoiceStream } from 'embodied-agent/server';     // 语音服务
 ```
 
@@ -34,12 +42,19 @@ node examples/minimal/index.ts
 ### 在本仓库里开发
 
 ```bash
-npm install          # 只有 demo 需要依赖；核心零依赖
-npm run check        # 类型检查 + 178 项测试
+npm install          # 装开发依赖（typescript / tsup / vite / cesium）
+npm run check        # 类型检查 + 226 项测试
 npm run build:lib    # 构建可发布的包
 npm run voice        # 语音服务（不配置 ASR 也能起，只是麦克风不可用）
-npm run dev          # 演示页面 http://localhost:5180/demo/wind/index.html
+npm run dev          # 演示页面 http://localhost:5180/demo/sandbox/index.html
 ```
+
+**需要 Node ≥ 22.18。** 测试直接跑 `.ts` 文件，依赖 Node 的类型剥离，
+而这个特性从 22.18 才有 —— 22.9 会报 `ERR_UNKNOWN_FILE_EXTENSION`。
+
+`demo/sandbox/` 不依赖任何外部资产，clone 下来就能跑。
+`demo/wind/` 需要自备 3D Tiles 地形与人物模型（资产不进仓库），
+只能跑前者不影响验证本包的核心能力。
 
 启用语音只需两步（`.env` 由 `npm run voice` 自动加载，Node 24 内置）：
 
