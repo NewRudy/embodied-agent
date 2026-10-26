@@ -7,7 +7,7 @@
     <style>
         :root {
             --bg: #0f1216;
-            --panel: rgba(18, 22, 28, 0.88);
+            --panel: rgba(18, 22, 28, 0.9);
             --border: rgba(255, 255, 255, 0.12);
             --text: #e6e9ee;
             --muted: #8b95a3;
@@ -19,131 +19,188 @@
         html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); }
         #cesiumContainer { position: absolute; inset: 0; }
 
-        .hud {
-            position: absolute;
+        /* —— 右下角停靠区 ——
+           默认只有一颗球。所有文字信息浮在球上方，展开面板也是向上长，
+           不遮挡场景中心的视线。 */
+        #dock {
+            position: absolute; right: 20px; bottom: 20px;
+            display: flex; flex-direction: column; align-items: flex-end;
+            gap: 10px;
             font: 13px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
             color: var(--text);
-            background: var(--panel);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            backdrop-filter: blur(12px);
+            pointer-events: none;      /* 空白区域不挡鼠标 */
         }
+        #dock > * { pointer-events: auto; }
 
-        #panel {
-            left: 16px; bottom: 16px;
-            width: min(420px, calc(100vw - 32px));
-            padding: 12px;
+        /* —— 状态信息：转写 + 当前状态 —— */
+        #info {
+            display: flex; flex-direction: column; align-items: flex-end;
+            gap: 3px; max-width: min(360px, calc(100vw - 40px));
+            text-align: right;
         }
-
-        #panel h1 {
-            font-size: 13px; font-weight: 600; margin: 0 0 2px;
-            letter-spacing: .02em;
+        #transcript {
+            font-size: 14px; color: var(--accent); font-style: italic;
+            padding: 3px 10px; border-radius: 8px;
+            background: rgba(18, 22, 28, 0.72);
+            backdrop-filter: blur(8px);
+            min-height: 0;
         }
-        #panel .sub { font-size: 11px; color: var(--muted); margin-bottom: 10px; }
-
+        #transcript:empty { display: none; }
         #readout {
             font-size: 11px; color: var(--muted);
             font-variant-numeric: tabular-nums;
-            padding: 6px 8px; margin-bottom: 8px;
-            background: rgba(255,255,255,.04);
-            border-radius: 6px;
+            padding: 2px 8px; border-radius: 6px;
+            background: rgba(18, 22, 28, 0.6);
         }
-
-        .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-        .chips button {
-            font: inherit; font-size: 12px;
-            padding: 5px 10px; border-radius: 999px;
-            background: rgba(255,255,255,.06);
-            border: 1px solid var(--border);
-            color: var(--text); cursor: pointer;
-            transition: background .15s;
-        }
-        .chips button:hover { background: rgba(78,168,255,.18); border-color: rgba(78,168,255,.4); }
-        .chips button.primary {
-            background: rgba(78,168,255,.22);
-            border-color: rgba(78,168,255,.55);
-            font-weight: 600;
-        }
-        .chips button:disabled { opacity: .55; cursor: default; }
         #demoNote {
-            font-size: 11px; color: var(--accent);
-            min-height: 16px; margin-bottom: 8px;
+            font-size: 11px; color: var(--warn);
+            padding: 2px 8px; border-radius: 6px;
+            background: rgba(18, 22, 28, 0.6);
         }
+        #demoNote:empty { display: none; }
+
+        /* —— 展开面板 —— */
+        #panel {
+            width: min(340px, calc(100vw - 40px));
+            padding: 10px;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            backdrop-filter: blur(14px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, .45);
+            transform-origin: bottom right;
+            transition: opacity .16s ease, transform .16s ease;
+        }
+        #panel[hidden] { display: none; }
 
         #cmd {
             width: 100%; padding: 9px 11px;
             font: inherit; font-size: 13px;
-            background: rgba(0,0,0,.35);
+            background: rgba(0, 0, 0, .35);
             border: 1px solid var(--border);
-            border-radius: 8px; color: var(--text);
+            border-radius: 9px; color: var(--text);
             outline: none;
         }
         #cmd:focus { border-color: var(--accent); }
+        #cmd::placeholder { color: rgba(139, 149, 163, .75); }
 
-        .row { display: flex; gap: 6px; align-items: stretch; }
-        .row #cmd { flex: 1; }
+        .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+        .chips button {
+            font: inherit; font-size: 12px;
+            padding: 4px 9px; border-radius: 999px;
+            background: rgba(255, 255, 255, .06);
+            border: 1px solid var(--border);
+            color: var(--text); cursor: pointer;
+            transition: background .15s, border-color .15s;
+        }
+        .chips button:hover { background: rgba(78, 168, 255, .18); border-color: rgba(78, 168, 255, .4); }
+        .chips button:disabled { opacity: .5; cursor: default; }
+        .chips .sep { width: 100%; height: 0; margin: 2px 0; }
+
+        /* —— 悬浮球 —— */
+        #orbRow { display: flex; align-items: center; gap: 8px; }
+
         #mic {
-            flex: 0 0 auto; width: 40px;
+            width: 56px; height: 56px;
             display: grid; place-items: center;
-            background: rgba(255,255,255,.06);
-            border: 1px solid var(--border); border-radius: 8px;
-            color: var(--text); cursor: pointer; font-size: 15px;
-            transition: background .15s, border-color .15s, box-shadow .15s;
+            font-size: 22px; line-height: 1;
+            border-radius: 50%;
+            background: radial-gradient(circle at 32% 28%, rgba(78, 168, 255, .35), rgba(18, 22, 28, .92));
+            border: 1px solid rgba(78, 168, 255, .35);
+            color: var(--text); cursor: pointer;
+            box-shadow: 0 6px 24px rgba(0, 0, 0, .5);
+            transition: transform .14s ease, box-shadow .2s ease, border-color .2s ease;
+            user-select: none;
         }
-        #mic:hover { background: rgba(78,168,255,.16); border-color: rgba(78,168,255,.4); }
-        #mic[data-state="connecting"] { border-color: var(--warn); color: var(--warn); }
+        #mic:hover { transform: scale(1.06); box-shadow: 0 8px 28px rgba(78, 168, 255, .3); }
+        #mic:active { transform: scale(.96); }
+        #mic[data-state="connecting"] {
+            border-color: var(--warn);
+            background: radial-gradient(circle at 32% 28%, rgba(240, 165, 74, .4), rgba(18, 22, 28, .92));
+        }
         #mic[data-state="listening"] {
-            background: rgba(70,196,138,.18); border-color: rgba(70,196,138,.6); color: var(--ok);
+            border-color: rgba(70, 196, 138, .75);
+            background: radial-gradient(circle at 32% 28%, rgba(70, 196, 138, .45), rgba(18, 22, 28, .92));
+            animation: pulse 1.8s ease-in-out infinite;
         }
-        #mic[data-state="off"] { opacity: .8; }
-        #mic:disabled { opacity: .35; cursor: not-allowed; }
-        #transcript {
-            font-size: 11px; color: var(--accent); min-height: 15px;
-            margin-top: 6px; font-style: italic;
+        #mic:disabled { opacity: .35; cursor: not-allowed; animation: none; }
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 6px 24px rgba(0, 0, 0, .5), 0 0 0 0 rgba(70, 196, 138, .45); }
+            50%      { box-shadow: 0 6px 24px rgba(0, 0, 0, .5), 0 0 0 12px rgba(70, 196, 138, 0); }
         }
 
+        /* 键盘按钮：打开输入面板 */
+        #toggle {
+            width: 34px; height: 34px;
+            display: grid; place-items: center;
+            font-size: 14px; line-height: 1;
+            border-radius: 50%;
+            background: rgba(18, 22, 28, .85);
+            border: 1px solid var(--border);
+            color: var(--muted); cursor: pointer;
+            backdrop-filter: blur(10px);
+            transition: color .15s, border-color .15s, transform .14s;
+        }
+        #toggle:hover { color: var(--text); border-color: rgba(78, 168, 255, .5); transform: scale(1.08); }
+        #toggle[aria-expanded="true"] { color: var(--accent); border-color: rgba(78, 168, 255, .55); }
+
+        /* —— 日志：默认隐藏，左上角 —— */
         #log {
-            position: absolute; right: 16px; top: 16px;
+            position: absolute; left: 16px; top: 16px;
             width: min(320px, calc(100vw - 32px));
-            max-height: 45vh; overflow: auto;
+            max-height: 42vh; overflow: auto;
             padding: 10px 12px;
             font: 11px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace;
             color: var(--muted);
+            background: rgba(18, 22, 28, .72);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+            pointer-events: auto;
         }
+        #log[hidden] { display: none; }
         #log div { padding: 1px 0; white-space: pre-wrap; word-break: break-all; }
         #log div:first-child { color: var(--text); }
 
-        .note {
-            position: absolute; left: 16px; top: 16px;
-            padding: 8px 12px; font-size: 11px; color: var(--muted);
-            max-width: 300px;
+        /* 手机上球稍小，避免挡住场景 */
+        @media (max-width: 480px) {
+            #dock { right: 14px; bottom: 14px; gap: 8px; }
+            #mic { width: 50px; height: 50px; font-size: 20px; }
+            #panel { width: calc(100vw - 28px); }
         }
     </style>
 </head>
 <body>
     <div id="cesiumContainer"></div>
 
-    <div id="log" class="hud"></div>
+    <div id="log" hidden></div>
 
-    <div id="panel" class="hud">
-        <h1>具身智能体 · 目标驱动漫游</h1>
-        <div class="sub">说一个目标，人物自己走过去；走到一半可以改。</div>
-        <div id="readout">状态 idle</div>
-        <div id="demoNote"></div>
-        <div class="chips">
-            <button id="demoBtn" class="primary">▶ 自动演示</button>
-            <button data-cmd="去3号风机">去 3 号风机</button>
-            <button data-cmd="去运维点">回运维点</button>
-            <button data-cmd="往前走20米">往前走 20 米</button>
-            <button data-cmd="往左一点">往左一点</button>
-            <button data-cmd="跑起来">跑起来</button>
-            <button data-cmd="停">停</button>
+    <div id="dock">
+        <div id="panel" hidden>
+            <input id="cmd" type="text" placeholder="说或输入目标，例如「去 7 号风机」" autocomplete="off">
+            <div class="chips">
+                <button data-cmd="去3号风机">去 3 号风机</button>
+                <button data-cmd="去运维点">回运维点</button>
+                <button data-cmd="往前走20米">往前走 20 米</button>
+                <button data-cmd="往左一点">往左一点</button>
+                <button data-cmd="跑起来">跑起来</button>
+                <button data-cmd="停">停</button>
+                <div class="sep"></div>
+                <button id="demoBtn">▶ 自动演示</button>
+                <button id="logBtn">日志</button>
+            </div>
         </div>
-        <div class="row">
-            <input id="cmd" type="text" placeholder="输入指令后回车，例如「去 7 号风机」" autocomplete="off">
+
+        <div id="info">
+            <div id="transcript"></div>
+            <div id="readout">状态 idle</div>
+            <div id="demoNote"></div>
+        </div>
+
+        <div id="orbRow">
+            <button id="toggle" title="输入指令（按 / 也可）" aria-label="输入指令" aria-expanded="false">⌨</button>
             <button id="mic" title="开启持续语音" aria-label="开启持续语音" data-state="off">🎤</button>
         </div>
-        <div id="transcript"></div>
     </div>
 
     <script type="module" src="./index.ts"></script>

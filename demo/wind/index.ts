@@ -83,6 +83,8 @@ async function main() {
         homeButton: false,
         sceneModePicker: false,
         navigationHelpButton: false,
+        // Cesium 默认全屏按钮在右下角，会和悬浮球叠在一起（实测截图）
+        fullscreenButton: false,
         infoBox: false,
         selectionIndicator: false,
         // 本演示不依赖 Cesium ion；去掉默认影像与地形，避免无 token 时报错
@@ -365,16 +367,50 @@ async function main() {
 
     const input = document.getElementById('cmd') as HTMLInputElement | null;
     input?.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { setPanelOpen(false); input.blur(); return; }
         if (e.key !== 'Enter') return;
         const text = input.value.trim();
-        if (text) { handleCommand(text); input.value = ''; }
+        if (text) { handleCommand(text); input.value = ''; setPanelOpen(false); }
     });
     document.querySelectorAll<HTMLButtonElement>('[data-cmd]').forEach((btn) => {
-        btn.addEventListener('click', () => handleCommand(btn.dataset.cmd!));
+        btn.addEventListener('click', () => { handleCommand(btn.dataset.cmd!); setPanelOpen(false); });
     });
     document.getElementById('demoBtn')?.addEventListener('click', () => { void runDemo(); });
 
-    log('就绪。输入「去3号风机」「往前走20米」「往左一点」「停」试试，或点「自动演示」。');
+    // —— 悬浮球：展开 / 收起 ——
+    // 默认只有一颗球。文字输入、快捷指令、日志都藏在展开面板里，
+    // 让场景本身占满视线 —— 这是个 3D 演示，UI 不该抢戏。
+    const panelEl = document.getElementById('panel');
+    const toggleBtn = document.getElementById('toggle') as HTMLButtonElement | null;
+    const logEl = document.getElementById('log');
+    const logBtn = document.getElementById('logBtn') as HTMLButtonElement | null;
+
+    function setPanelOpen(open: boolean) {
+        if (!panelEl || !toggleBtn) return;
+        panelEl.hidden = !open;
+        toggleBtn.setAttribute('aria-expanded', String(open));
+        if (open) input?.focus();
+    }
+
+    toggleBtn?.addEventListener('click', () => setPanelOpen(panelEl?.hidden ?? true));
+
+    // 键盘：/ 打开输入，Esc 收起。输入框里按 / 不应该再触发。
+    document.addEventListener('keydown', (e) => {
+        if (e.key === '/' && document.activeElement !== input) {
+            e.preventDefault();
+            setPanelOpen(true);
+        } else if (e.key === 'Escape' && panelEl && !panelEl.hidden) {
+            setPanelOpen(false);
+        }
+    });
+
+    logBtn?.addEventListener('click', () => {
+        if (!logEl) return;
+        logEl.hidden = !logEl.hidden;
+        logBtn.textContent = logEl.hidden ? '日志' : '收起日志';
+    });
+
+    log('就绪。点右下角 🎤 说话，或按 / 输入指令。');
     // 自动化验收要手动逐帧驱动：只调 agent.update 而不施加输出的话，
     // worldMovement 一直是 null，人物不动。applyOutput 一起导出。
     (window as any).__agent = {
