@@ -9,19 +9,23 @@
 说一句「去 3 号风机」，人物自己走过去；走到一半说「往左一点」，它平滑偏过去，**不会停下来重算**。
 说话时它也在回话，你随时可以打断它。
 
-> **状态**：`0.1.0`，未发布到 npm。当前通过 git 安装。
+> **状态**：`0.1.0`，**开源**（MIT）。通过 git 安装，尚未发布到 npm。
 > 已验证的范围与证据层级见 [`ACCEPTANCE.md`](ACCEPTANCE.md) —— 请按那份文档判断可用性，
 > 不要按这个 README 的宣传语判断。
 >
 > **真人语音还没验证过。** 已验到 Chrome 假音频 + 真实豆包 ASR 全链路
 > （见 L15），差声学输入这一步。自己跑一遍用 [`VOICE-CHECKLIST.md`](VOICE-CHECKLIST.md)。
+>
+> **为什么没发 npm**：这是作者的选择，不是待办。公开仓库 + MIT 许可已经满足开源的
+> 常见定义，`npm install github:NewRudy/embodied-agent` 可直接安装。
+> 等真人语音验收通过、API 稳定后再考虑发 npm —— 发布后 72 小时内不能 unpublish。
 
 ---
 
 ## 别人怎么引入这个包
 
 ```bash
-# 尚未发布到 npm，先这样装：
+# 从 GitHub 安装（尚未发 npm，这样装即可）
 npm install github:NewRudy/embodied-agent
 ```
 
