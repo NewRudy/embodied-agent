@@ -13,6 +13,14 @@
     ],
     "license": "MIT",
     "author": "吴廷鑫 (Wu Tingxin)",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/NewRudy/embodied-agent.git"
+    },
+    "homepage": "https://github.com/NewRudy/embodied-agent#readme",
+    "bugs": {
+        "url": "https://github.com/NewRudy/embodied-agent/issues"
+    },
     "engines": {
         "node": ">=22.9"
     },
