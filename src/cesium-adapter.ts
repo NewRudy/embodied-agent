@@ -184,23 +184,37 @@ export class CesiumSceneAdapter implements SceneAdapter {
     }
 
     resolveReference(text: string): Vec3 | null {
+        // 先把空白去掉再比。场景资产的名称常写成「3 号风机」（数字和「号」之间有空格，
+        // 因为排版好看），而 ASR 转写和用户输入都是「3号风机」/「三号风机」。
+        // 不归一空格的话，`"3号风机".includes("3 号风机") === false` ——
+        // 语音和文字都永远匹配不上，而且失败得毫无线索。
+        const compact = (s: string) => s.replace(/\s+/g, '');
+        const haystack = compact(text);
+        const hit = (needle: string) => haystack.includes(compact(needle));
+
         // 最长匹配优先：「3 号风机」优先于「3 号」
         const keys = [...this.references.keys()].sort((a, b) => b.length - a.length);
         for (const key of keys) {
-            if (text.includes(key)) return this.references.get(key)!;
+            if (hit(key)) return this.references.get(key)!;
         }
         for (const [alias, target] of this.aliases) {
-            if (text.includes(alias)) {
+            if (hit(alias)) {
                 const v = this.references.get(target);
                 if (v) return v;
             }
         }
         // ASR 几乎总把「3 号」识别成「三号」，而场景里的 ID 是阿拉伯数字。
         // 不做这层归一，语音输入会一直「没听懂」，而文字输入却正常 —— 极难排查。
-        const normalized = normalizeNumerals(text);
-        if (normalized !== text) {
+        const normalized = compact(normalizeNumerals(text));
+        if (normalized !== haystack) {
             for (const key of keys) {
-                if (normalized.includes(key)) return this.references.get(key)!;
+                if (normalized.includes(compact(key))) return this.references.get(key)!;
+            }
+            for (const [alias, target] of this.aliases) {
+                if (normalized.includes(compact(alias))) {
+                    const v = this.references.get(target);
+                    if (v) return v;
+                }
             }
         }
         return null;

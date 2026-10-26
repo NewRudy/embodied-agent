@@ -70,3 +70,54 @@ test('最长匹配优先：3号风机 不会被 3号 抢走', () => {
     (a as unknown as { references: Map<string, Vec3> }).references.set('3号', { east: 1, north: 2, up: 3 });
     assert.deepEqual(a.resolveReference('去3号风机'), { east: 460, north: -90, up: 134 });
 });
+
+// —— 名称里的空格 ——
+//
+// 这一组来自真实场景验收：farm.json 的 label 是「3 号风机」（数字和「号」之间有空格，
+// 因为排版好看），而 ASR 转写和用户输入都是「3号风机」/「三号风机」。
+// 不做空格归一，`"3号风机".includes("3 号风机") === false` ——
+// 语音和文字**都**永远匹配不上，而且失败得毫无线索（规则层只是安静地没命中）。
+
+function makeSpacedAdapter() {
+    const adapter = Object.create(CesiumSceneAdapter.prototype) as CesiumSceneAdapter;
+    (adapter as unknown as { references: Map<string, Vec3> }).references = new Map([
+        ['3 号风机', { east: 460, north: -90, up: 134 }],
+        ['10 号风机', { east: 100, north: 200, up: 0 }],
+        ['运维点', { east: 200, north: 240, up: 148 }],
+    ]);
+    (adapter as unknown as { aliases: Map<string, string> }).aliases = new Map([
+        ['风机3', '3 号风机'],
+        ['3 号机组', '3 号风机'],
+    ]);
+    return adapter;
+}
+
+test('参照物名带空格时，阿拉伯数字输入也能命中', () => {
+    const a = makeSpacedAdapter();
+    assert.deepEqual(a.resolveReference('去3号风机'), { east: 460, north: -90, up: 134 });
+    assert.deepEqual(a.resolveReference('去10号风机'), { east: 100, north: 200, up: 0 });
+});
+
+test('参照物名带空格时，中文数字输入（真实 ASR 输出）也能命中', () => {
+    const a = makeSpacedAdapter();
+    // 豆包实际返回的是「去三号风机。」，带句号
+    assert.deepEqual(a.resolveReference('去三号风机。'), { east: 460, north: -90, up: 134 });
+    assert.deepEqual(a.resolveReference('去三号风机'), { east: 460, north: -90, up: 134 });
+});
+
+test('参照物名带空格时，别名也能命中', () => {
+    const a = makeSpacedAdapter();
+    assert.deepEqual(a.resolveReference('去风机3'), { east: 460, north: -90, up: 134 });
+    assert.deepEqual(a.resolveReference('去3号机组'), { east: 460, north: -90, up: 134 });
+});
+
+test('不带数字的名称不受空格归一影响', () => {
+    const a = makeSpacedAdapter();
+    assert.deepEqual(a.resolveReference('回运维点'), { east: 200, north: 240, up: 148 });
+});
+
+test('归一空格后仍然不瞎猜', () => {
+    const a = makeSpacedAdapter();
+    assert.equal(a.resolveReference('去七号风机'), null);
+    assert.equal(a.resolveReference('去 那个 地方'), null);
+});

@@ -184,11 +184,15 @@ async function main() {
     };
 
     // —— 语音 ——
+    // 访问密钥从页面 URL 的 ?key= 带进来，转给语音服务。
+    // 漏掉这步的话，页面能开、能打字，但麦克风永远连不上 —— 而且失败得
+    // 很安静（服务端 401，浏览器只看到「连接已结束」）。
     const VOICE_KEY = new URLSearchParams(location.search).get('key') ?? '';
     const voiceUrl = (() => {
         const url = new URL('/voice/stream', location.href);
         url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
         url.port = '5181'; // 语音服务独立端口，与 vite 分开
+        if (VOICE_KEY) url.searchParams.set('key', VOICE_KEY);
         return url.toString();
     })();
 
