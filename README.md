@@ -48,6 +48,7 @@ node examples/minimal/index.ts
 npm install          # 装开发依赖（typescript / tsup / vite / cesium）
 npm run check        # 类型检查 + 226 项测试
 npm run build:lib    # 构建可发布的包
+npm run preflight    # 发布前自检（发布时也会自动跑）
 npm run voice        # 语音服务（不配置 ASR 也能起，只是麦克风不可用）
 npm run dev          # 演示页面 http://localhost:5180/demo/sandbox/index.html
 ```
@@ -627,6 +628,7 @@ examples/minimal/     最小可运行示例（纯 Node）
 tools/
   measure-stride.ts   从 GLB 量 clip 的自然速度（换模型必须跑）
   asr-probe.ts        探测真实 ASR 把某句话听成什么（换麦克风/口音后要跑）
+  preflight.ts        发布前自检（构建产物、子入口、凭据泄露、版本占用）
 test/                 226 项测试
 test/live/            打真实模型的冒烟测试（不进 npm test）
 .github/workflows/    CI：Node 22.18 + 24 上跑 typecheck + 全部测试
