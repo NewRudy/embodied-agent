@@ -135,11 +135,16 @@ async function main() {
     }
 
     // —— 参照物表：口语 → ENU ——
+    //
+    // aliases 里的「同音误识」是**实测**出来的，不是猜的：
+    //   node tools/asr-probe.ts "回运维点"   →  豆包返回「回韵尾典。」
+    // 三个字全错，编辑距离等于长度，模糊匹配救不回来（放宽会把 3 号配到 4 号）。
+    // 只能把听错的说法显式登记。换麦克风/口音/环境可能出新错法，需要重新补。
     const references: ReferenceEntry[] = [
         {
             name: farm.opsPoint.label,
             at: { ...farm.opsPoint.offset },
-            aliases: ['运维点', '出发点', '起点'],
+            aliases: ['运维点', '出发点', '起点', '韵尾典', '运尾点'],
             description: '运维基地，人物出生点',
         },
         ...farm.turbines.map((t) => ({

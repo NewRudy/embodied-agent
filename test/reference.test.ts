@@ -121,3 +121,39 @@ test('归一空格后仍然不瞎猜', () => {
     assert.equal(a.resolveReference('去七号风机'), null);
     assert.equal(a.resolveReference('去 那个 地方'), null);
 });
+
+// —— 同音误识的兜底 ——
+//
+// 来自真实 ASR 实测：豆包把「回运维点」听成「回韵尾典。」，三个字全错。
+//
+// 为什么不能靠模糊匹配：
+//   编辑距离(运维点, 韵尾典) = 3，等于长度 —— 等于完全没相似度；
+//   而编辑距离(3号风机, 4号风机) = 1 —— 放宽阈值会把 3 号配到 4 号，
+//   这是比「没听懂」更糟的失败（它会自信地走错地方）。
+// 所以只能把实测听错的说法显式登记进 aliases。
+
+test('登记的同音误识能命中（真实 ASR 输出）', () => {
+    const a = Object.create(CesiumSceneAdapter.prototype) as CesiumSceneAdapter;
+    (a as unknown as { references: Map<string, Vec3> }).references = new Map([
+        ['运维点', { east: 200, north: 240, up: 148 }],
+        ['3 号风机', { east: 460, north: -90, up: 134 }],
+    ]);
+    (a as unknown as { aliases: Map<string, string> }).aliases = new Map([
+        ['韵尾典', '运维点'],
+        ['运尾点', '运维点'],
+    ]);
+    // 带句号，和豆包实际返回一致
+    assert.deepEqual(a.resolveReference('回韵尾典。'), { east: 200, north: 240, up: 148 });
+    assert.deepEqual(a.resolveReference('回运尾点'), { east: 200, north: 240, up: 148 });
+});
+
+test('没有登记的同音错误不瞎猜 —— 宁可没听懂，也不要走错地方', () => {
+    const a = Object.create(CesiumSceneAdapter.prototype) as CesiumSceneAdapter;
+    (a as unknown as { references: Map<string, Vec3> }).references = new Map([
+        ['3 号风机', { east: 460, north: -90, up: 134 }],
+        ['4 号风机', { east: 500, north: -120, up: 130 }],
+    ]);
+    (a as unknown as { aliases: Map<string, string> }).aliases = new Map();
+    // 「5号风机」和 3/4 号只差一个字，但场景里没有 5 号，必须返回 null
+    assert.equal(a.resolveReference('去5号风机'), null);
+});

@@ -626,6 +626,7 @@ public/voice/
 examples/minimal/     最小可运行示例（纯 Node）
 tools/
   measure-stride.ts   从 GLB 量 clip 的自然速度（换模型必须跑）
+  asr-probe.ts        探测真实 ASR 把某句话听成什么（换麦克风/口音后要跑）
 test/                 226 项测试
 test/live/            打真实模型的冒烟测试（不进 npm test）
 .github/workflows/    CI：Node 22.18 + 24 上跑 typecheck + 全部测试
