@@ -13,9 +13,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 22.9 是本包 engines 的下限（--env-file-if-exists 从 22.9 起才有）。
+        # 22.18 是本包 engines 的下限：`node --test test/*.ts` 直接跑 TypeScript
+        # 需要 Node 的类型剥离，它从 22.18 开始才有（实测 22.9 报
+        # ERR_UNKNOWN_FILE_EXTENSION，22.18 通过）。
         # 24 是开发时实际用的版本，两者都要过，避免只在本机版本上「看起来能跑」。
-        node: ['22.9', '24']
+        node: ['22.18', '24']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

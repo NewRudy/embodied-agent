@@ -610,7 +610,7 @@ tools/
   measure-stride.ts   从 GLB 量 clip 的自然速度（换模型必须跑）
 test/                 226 项测试
 test/live/            打真实模型的冒烟测试（不进 npm test）
-.github/workflows/    CI：Node 22.9 + 24 上跑 typecheck + 全部测试
+.github/workflows/    CI：Node 22.18 + 24 上跑 typecheck + 全部测试
 demo/wind/            风机场景演示
 demo/sandbox/         空白场景（无 Cesium、无资产）
 ```
