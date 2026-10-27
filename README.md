@@ -61,7 +61,7 @@ node examples/minimal/index.ts
 
 ```bash
 npm install          # 装开发依赖（typescript / tsup / vite / cesium）
-npm run check        # 类型检查 + 241 项测试
+npm run check        # 类型检查 + 250 项测试
 npm run build:lib    # 构建可发布的包
 npm run preflight    # 发布前自检（发布时也会自动跑）
 npm run voice        # 语音服务（不配置 ASR 也能起，只是麦克风不可用）
@@ -611,7 +611,7 @@ Sprint_Loop      0.667s  步幅 1.226  自然速度 3.621 m/s
 
 | 层 | 内容 | 状态 |
 |---|---|---|
-| 单元测试 | 241 项：运动收敛、减速曲线、反射、意图、置信度、模型校验、多步队列、回声过滤、帧编解码、数字归一、动画速度匹配、出生点解算 | ✅ 通过 |
+| 单元测试 | 250 项：运动收敛、减速曲线、反射、意图、置信度、模型校验、多步队列、回声过滤、帧编解码、数字归一、动画速度匹配、出生点解算 | ✅ 通过 |
 | 构建 | `vite build` 成功 | ✅ 通过 |
 | 浏览器 | 目标驱动、中途修正、变速、到达、停止、动画跟随 | ✅ 通过 |
 | 浏览器 | 动画速度匹配：实测 4.775 m/s ↔ 动画隐含 5.000 m/s，clip 随速度切 Walk→Jog→Sprint | ✅ 通过 |
@@ -683,7 +683,7 @@ tools/
   measure-stride.ts   从 GLB 量 clip 的自然速度（换模型必须跑）
   asr-probe.ts        探测真实 ASR 把某句话听成什么（换麦克风/口音后要跑）
   preflight.ts        发布前自检（构建产物、子入口、凭据泄露、版本占用）
-test/                 241 项测试
+test/                 250 项测试
 test/live/            打真实模型的冒烟测试（不进 npm test）
 .github/workflows/    CI：Node 22.18 + 24 上跑 typecheck + 全部测试
 demo/wind/            风机场景演示

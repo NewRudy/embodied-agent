@@ -76,7 +76,29 @@ function escapeRegExp(s: string): string {
 export function isPausePhrase(text: string, wakeWord?: string): boolean {
     const stripped = stripWakePrefix(text, wakeWord);
     const t = trimPunctuation((stripped == null ? text : stripped).normalize('NFKC'));
-    return /^(?:请|你)?(?:马上|立即|快|先)?(?:停下(?:来)?|停一下|听一下|停住|停|停止(?:移动|前进|走动)?|暂停(?:一下)?|别动|别走了|不要走了|站住|等一下)(?:[，,\s]|$)/.test(t)
+    const CORE = /^(?:停下(?:来)?|停一下|听一下|停住|停|停止(?:移动|前进|走动)?|暂停(?:一下)?|别动|别走了|不要走了|站住|等一下)(?:[，,\s]|$)/;
+    // 叠词先压一遍：「等一下等一下」「停停停」。真人着急时会重复。
+    const dedup = t
+        .replace(/^(?:等一下|等等)+$/, '等一下')
+        .replace(/^(?:停|停下|停住){2,}$/, '停');
+    // 先按原样判一次。这一步不能省 —— 剥后缀会把「等一下」「听一下」
+    // 「别走了」剥成「等」「听」「别」，反而漏判。
+    if (CORE.test(t) || CORE.test(dedup)) return true;
+    // 再剥掉前后缀判一次。「停下吧」「赶紧停下」「别动了」这类口语形态
+    // 原样判漏了 —— 而播报期间喊停是最不能失灵的场景。
+    //
+    // 这里和 intent.ts 的 stripStopAffixes 是两份独立实现：
+    // 本函数的判定必须比意图层更宽松（宁可提前停一下，也不要漏判），
+    // 所以不复用，避免以后改意图规则时把打断能力一起改坏。
+    const core = dedup
+        .replace(/^(?:请|你|您|先|快|马上|立即|立刻|赶紧|赶快|现在|就|还是|要不|麻烦|算了)+/, '')
+        .replace(/(?:一下|一会儿|一会|会儿|下|等等|吧|啊|呀|哦|嘛|了)+$/g, '');
+    // 否定式停指令：「先别走了」「算了别走了」。前缀「先/算了」把否定词
+    // 从句首挤开，CORE 匹配不到 —— 而漏判意味着播报中喊停没反应。
+    if (/^(?:别|不要|不用|甭|不许|勿|莫)(?:再)?(?:往|向|朝)?[一-龥]{0,4}?(?:过去|走|动|去|跑|往前|前进|动窝)/.test(core)) {
+        return true;
+    }
+    return CORE.test(core)
         || /^(?:不对|算了|改成|换成|先别)(?:[，,\s]|$)/.test(t);
 }
 
