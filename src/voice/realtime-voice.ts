@@ -21,6 +21,18 @@ export interface VoiceCommandTiming {
     transcriptAt: number;
     /** 这句话在音频里结束的时刻（performance.now 基准）。 */
     speechEndAt?: number;
+    /**
+     * true = 这条命令来自**临时转写**（partial），不是定稿句。
+     *
+     * 只有「停」类短命令允许这样提前触发（isImmediatePause）——
+     * 定稿要等 ASR 静音判定（实测 697ms），喊停的半秒里人物还在走。
+     * 普通移动指令必须等定稿：partial 会反复变化（「去3号」→「去3号风机」），
+     * 拿它驱动移动会先冲出去再改方向。
+     *
+     * 消费方（create-scene）可以据此跳过播报（这句话还没说完），
+     * 或者在定稿到达时识别出重复的停指令直接忽略。
+     */
+    partial?: boolean;
 }
 
 export const AUDIO_WORKLET_STARTUP_TIMEOUT_MS = 10_000;
@@ -166,7 +178,33 @@ export class RealtimeVoice {
             if (this.acceptedInterruptions.size > 512) this.acceptedInterruptions.delete(this.acceptedInterruptions.keys().next().value!);
             this.options.onInterrupt?.({ text: u.text, utteranceId: u.id, transcriptAt: now, reason: decision.reason });
         }
-        if (!u.final) { this.partialIds.add(u.id); this.options.onPartial(u.text); return; }
+        if (!u.final) {
+            this.partialIds.add(u.id);
+            this.options.onPartial(u.text);
+            // 停指令在**临时转写**阶段就执行，不等定稿。
+            //
+            // 为什么要这样：定稿要等 ASR 的静音判定窗口（默认 400ms）+
+            // 上游处理，实测说完→定稿 697ms。对「停」来说这 697ms 是纯粹的
+            // 浪费 —— 用户喊停时人物还在往前走，撞上东西就是这半秒。
+            //
+            // 只对「停」这类短命令提前，普通移动指令仍然等定稿：
+            // 临时结果会反复变化（「去3号」→「去3号风机」），
+            // 拿它驱动移动会导致人物先冲出去再改方向。
+            //
+            // 判据用 isPausePhrase（和播报打断同一套），它已经覆盖了
+            // 口语形态和同音误识（「听一下」= 「停一下」）。
+            if (isImmediatePause(u.text, this.options.wakeWord)) {
+                const pauseText = u.text.trim();
+                if (pauseText) {
+                    this.options.onCommand(pauseText, {
+                        transcriptAt: now,
+                        speechEndAt: undefined,
+                        partial: true,
+                    });
+                }
+            }
+            return;
+        }
         this.partialIds.delete(u.id);
         this.playbackBlockedIds.delete(u.id);
         let speechEndAt: number | undefined;
