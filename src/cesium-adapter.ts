@@ -24,7 +24,14 @@ export interface PlayerLike extends BodyLike {
     posEcef: Cartesian3;
     isFlying: boolean;
     playerIsOnGround: boolean;
+    /**
+     * 读朝向（弧度）。`cesium-player-controller` 的真实方法名是 getYaw()。
+     *
+     * getPlayerHeading 是早期假定的名字，引擎里并不存在 —— 只读它会让 yaw
+     * 恒为 0，人物朝目标的反方向走。两个都读，谁有就用谁。
+     */
     getPlayerHeading?: () => number;
+    getYaw?: () => number;
     setScriptedYaw(yaw: number | null): void;
     setFlightMode(enabled: boolean): void;
     getGroundClearanceMeters(): number;
@@ -168,7 +175,15 @@ export class CesiumSceneAdapter implements SceneAdapter {
 
     getPose(): Pose {
         const enu = this.frame.toEnu(this.player.posEcef);
-        const yaw = this.player.getPlayerHeading?.() ?? 0;
+        // 朝向：`cesium-player-controller` 只提供 getYaw()，没有 getPlayerHeading()。
+        // 之前只读 getPlayerHeading，于是 yaw 恒为 0 ——
+        // 而引擎实际朝向可能是任意角度，两者差了 90° 以上时，
+        // 人物就朝目标的反方向走（实测：距目标 22 m 一路涨到 49 m）。
+        //
+        // 这个错很隐蔽：状态、速度、动画都正常，只有方向反了。
+        const yaw = this.player.getPlayerHeading?.()
+            ?? this.player.getYaw?.()
+            ?? 0;
         return {
             east: enu.east,
             north: enu.north,

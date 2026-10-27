@@ -18,7 +18,7 @@ import type { ColliderSource } from 'cesium-player-controller';
 
 import { createEmbodiedScene, type EmbodiedScene } from '../../src/create-scene.ts';
 import { setupCesiumScene, type ReferenceEntry } from '../../src/cesium-scene.ts';
-import { applyOutput } from '../../src/body.ts';
+import { applyOutput, resolveBody } from '../../src/body.ts';
 import { mountOrbUI } from '../../src/ui/orb.ts';
 import type { BodyLike } from '../../src/body.ts';
 import { unusedClips, type LocomotionProfile } from '../../src/locomotion.ts';
@@ -246,7 +246,13 @@ async function main() {
     // —— 装配：引擎无关侧（意图、语音、每帧解算）——
     const scene = createEmbodiedScene({
         adapter: setup.adapter,
-        player: setup.player as unknown as BodyLike,
+        // resolveBody 把 playerController 适配成 BodyLike。
+        // 不加这层的话，下面这些调用全都是静默失败的（都带 `?.`）：
+        //   playPlayerAnimationByClipName → 引擎叫 playPlayerAnimationByName
+        //   setScriptedYaw                → 引擎只有 addYaw(增量)
+        //   setWorldMovement              → 引擎没有，只能 setInput
+        // 实测症状：人物站着不动，或动了但走反方向、动画一直是 idle。
+        player: resolveBody(setup.player) as unknown as BodyLike,
         agent: {
             origin: { east: farm.opsPoint.offset.east, north: farm.opsPoint.offset.north, up: 0 },
             config: { walkSpeed: 1.4, runSpeed: DEMO_RUN_SPEED, boundsRadius: 1500 },

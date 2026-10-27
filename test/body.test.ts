@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { applyOutput, releaseBody, type BodyLike } from '../src/body.ts';
+import { applyOutput, releaseBody, resolveBody, type BodyLike } from '../src/body.ts';
 import type { AgentOutput, MovementCommand } from '../src/types.ts';
 import type { LocomotionProfile } from '../src/locomotion.ts';
 
@@ -133,4 +133,113 @@ test('引擎没实现动画方法时不崩', () => {
     // 只实现最小 BodyLike 的引擎（比如纯 Node 测试替身）
     const minimal: BodyLike = { setWorldMovement() {} };
     assert.doesNotThrow(() => applyOutput(minimal, output(3.2), { locomotion: PROFILE }));
+});
+
+// ==================== 引擎没有 setWorldMovement ====================
+//
+// 实测来源：wind demo 在真实浏览器里每帧抛
+// `setWorldMovement is not a function`，被 tick 的 try/catch 吞掉，
+// 表现是「人物站着不动、日志只报一次」。
+//
+// 根因：setWorldMovement 是本包自己定义的接口，不是所有引擎都有。
+// cesium-player-controller 的 94 个方法里就没有 —— 它只接受按键轴。
+
+test('引擎只有 setInput 时，用按键轴驱动而不是抛异常', () => {
+    const inputs: Array<{ moveX?: number; moveY?: number; shift?: boolean }> = [];
+    // 关键：故意不实现 setWorldMovement
+    const body: BodyLike = {
+        setInput(input) { inputs.push(input); },
+    };
+    assert.doesNotThrow(() => applyOutput(body, output(3.2), { locomotion: PROFILE }));
+    const last = inputs.at(-1);
+    assert.ok(last, '应当喂了按键轴');
+    assert.equal(last!.moveY, 1, '有速度时前进轴应为 1');
+});
+
+test('只有 setInput 的引擎，停下时前进轴归零', () => {
+    const inputs: Array<{ moveX?: number; moveY?: number; shift?: boolean }> = [];
+    const body: BodyLike = { setInput(input) { inputs.push(input); } };
+    applyOutput(body, output(3.2), { locomotion: PROFILE });
+    applyOutput(body, output(0, 'idle'), { locomotion: PROFILE });
+    assert.equal(inputs.at(-1)?.moveY, 0, '停下后前进轴必须归零，否则人物一直走');
+});
+
+test('配了 locomotion 也要喂按键轴（这是 wind demo 的实际组合）', () => {
+    // 之前只在「没配 locomotion」时才 setInput，于是 wind demo
+    // 两条路都没走通：setWorldMovement 不存在抛异常，setInput 又没被调用。
+    const inputs: unknown[] = [];
+    const body: BodyLike = { setInput(input) { inputs.push(input); } };
+    applyOutput(body, output(3.2), { locomotion: PROFILE });
+    assert.ok(inputs.length > 0, '配了 locomotion 的引擎仍然需要按键轴来产生位移');
+});
+
+test('有 setWorldMovement 时不重复喂按键轴（避免两条驱动打架）', () => {
+    const { body, calls } = fakeBody();
+    applyOutput(body, output(3.2), { locomotion: PROFILE });
+    // fakeBody 同时实现了两个方法；有 setWorldMovement 时只走它。
+    assert.equal(calls.filter(c => c.kind === 'input').length, 0);
+});
+
+// ==================== resolveBody：名字对不上的适配 ====================
+//
+// 这一组守的是「接口名和引擎实际方法名不一致」导致的静默失败。
+// 所有调用都带 `?.`，名字对不上不会报错，只会让功能不生效 ——
+// 实测 wind demo 因此在真实浏览器里：人物不动、动起来走反方向、动画一直 idle。
+
+test('resolveBody：playPlayerAnimationByName 被适配成 playPlayerAnimationByClipName', () => {
+    const played: string[] = [];
+    const engine = {
+        playPlayerAnimationByName(n: string) { played.push(n); },
+    };
+    const body = resolveBody(engine);
+    body.playPlayerAnimationByClipName?.('Walk_Loop');
+    assert.deepEqual(played, ['Walk_Loop']);
+});
+
+test('resolveBody：传 null 时交还按键驱动，而不是播一个叫 null 的动画', () => {
+    let pressed = 0;
+    const engine = {
+        playPlayerAnimationByName() {},
+        setAnimationByPressed() { pressed++; },
+    };
+    const body = resolveBody(engine);
+    body.playPlayerAnimationByClipName?.(null);
+    assert.equal(pressed, 1);
+});
+
+test('resolveBody：setScriptedYaw 改的是相机方位角，不是 player.yaw', () => {
+    // 引擎的位移方向由 getCameraYaw() 决定（读源码 updatePlayer 确认）：
+    //   dirE = moveY * sin(camYaw) + moveX * cos(camYaw)
+    // 只改 player.yaw 的话，人物朝向对了但走的方向还是错的。
+    // 实测症状：yaw 从 -1.57 转到 2.65，距目标却从 425 m 涨到 458 m。
+    const cam = { theta: 0 };
+    const engine = { cam, getCameraYaw: () => cam.theta - Math.PI };
+    const body = resolveBody(engine);
+    body.setScriptedYaw?.(1.0);
+    assert.ok(Math.abs(cam.theta - (1.0 + Math.PI)) < 1e-9, `theta 应为 yaw+π，实际 ${cam.theta}`);
+});
+
+test('resolveBody：调用引擎方法时保留 this（解构会丢 this）', () => {
+    // 实测踩到：const getYaw = body.getYaw; getYaw() 会抛
+    // `Cannot read properties of undefined (reading 'yaw')`，
+    // 而这个错被 try/catch 吞掉，表现为「人物朝反方向走」。
+    const cam = { theta: 0.5 };
+    const engine = {
+        cam,
+        state: { yaw: 0.5 },
+        getCameraYaw() { return this.state.yaw; },
+    };
+    const body = resolveBody(engine);
+    assert.doesNotThrow(() => body.setScriptedYaw?.(1.0));
+    assert.ok(Math.abs(cam.theta - (1.0 + Math.PI)) < 1e-9);
+});
+
+test('resolveBody 是幂等的：已经是 BodyLike 的对象不被改写', () => {
+    const existing = {
+        setWorldMovement() {},
+        setScriptedYaw() {},
+        playPlayerAnimationByClipName() {},
+    };
+    const body = resolveBody(existing);
+    assert.equal(body, existing);
 });
