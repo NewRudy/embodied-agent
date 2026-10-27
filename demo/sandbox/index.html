@@ -5,90 +5,25 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>具身智能体 · 空白场景</title>
     <style>
-        :root {
-            --bg: #0b0e12;
-            --panel: rgba(16, 20, 26, 0.9);
-            --border: rgba(255, 255, 255, 0.12);
-            --text: #e6e9ee;
-            --muted: #8b95a3;
-            --accent: #4ea8ff;
-            --ok: #46c48a;
-            --warn: #f0a54a;
-        }
+        /* 场景容器 + 图例。操作界面由 src/ui/orb.ts 挂载（shadow DOM），
+           这里不需要写任何面板/按钮样式。 */
+        :root { --muted: #8b95a3; --text: #e6e9ee; }
         * { box-sizing: border-box; }
-        html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); }
+        html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0e12; }
         /* canvas 是替换元素：只写 inset:0 不够，它的布局尺寸仍取位图属性。
            必须显式给 CSS 宽高，否则位图尺寸和布局尺寸会互相放大。 */
         #stage { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-
-        .hud {
-            position: absolute;
-            font: 13px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
-            color: var(--text);
-            background: var(--panel);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            backdrop-filter: blur(12px);
-        }
-
-        #panel {
-            left: 16px; bottom: 16px;
-            width: min(440px, calc(100vw - 32px));
-            padding: 12px;
-        }
-        #panel h1 { font-size: 13px; font-weight: 600; margin: 0 0 2px; }
-        #panel .sub { font-size: 11px; color: var(--muted); margin-bottom: 10px; }
-        #readout {
-            font-size: 11px; color: var(--muted);
-            font-variant-numeric: tabular-nums;
-            padding: 6px 8px; margin-bottom: 8px;
-            background: rgba(255,255,255,.04);
-            border-radius: 6px;
-        }
-        .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-        .chips button {
-            font: inherit; font-size: 12px;
-            padding: 5px 10px; border-radius: 999px;
-            background: rgba(255,255,255,.06);
-            border: 1px solid var(--border);
-            color: var(--text); cursor: pointer;
-        }
-        .chips button:hover { background: rgba(78,168,255,.18); border-color: rgba(78,168,255,.4); }
-        .row { display: flex; gap: 6px; }
-        .row #cmd { flex: 1; }
-        #cmd {
-            width: 100%; padding: 9px 11px;
-            font: inherit; font-size: 13px;
-            background: rgba(0,0,0,.35);
-            border: 1px solid var(--border);
-            border-radius: 8px; color: var(--text); outline: none;
-        }
-        #cmd:focus { border-color: var(--accent); }
-        #mic {
-            flex: 0 0 auto; width: 40px;
-            display: grid; place-items: center;
-            background: rgba(255,255,255,.06);
-            border: 1px solid var(--border); border-radius: 8px;
-            color: var(--text); cursor: pointer; font-size: 15px;
-        }
-        #mic[data-state="listening"] { background: rgba(70,196,138,.18); border-color: rgba(70,196,138,.6); color: var(--ok); }
-        #transcript { font-size: 11px; color: var(--accent); min-height: 15px; margin-top: 6px; font-style: italic; }
-
-        #log {
-            position: absolute; right: 16px; top: 16px;
-            width: min(320px, calc(100vw - 32px));
-            max-height: 50vh; overflow: auto;
-            padding: 10px 12px;
-            font: 11px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace;
-            color: var(--muted);
-        }
-        #log div { padding: 1px 0; white-space: pre-wrap; word-break: break-all; }
-        #log div:first-child { color: var(--text); }
 
         #legend {
             position: absolute; left: 16px; top: 16px;
             padding: 10px 12px; font-size: 11px; color: var(--muted);
             max-width: 260px;
+            font: 13px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+            color: var(--muted);
+            background: rgba(16, 20, 26, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 10px;
+            backdrop-filter: blur(12px);
         }
         #legend b { color: var(--text); font-weight: 600; }
         #legend .dot {
@@ -100,35 +35,13 @@
 <body>
     <canvas id="stage"></canvas>
 
-    <div id="legend" class="hud">
+    <div id="legend">
         <b>空白场景</b><br>
         没有地形、没有模型、没有第三方资产。<br>
         只有一块平地、几个参照点、一个人物圆点。<br><br>
         <span class="dot" style="background:#4ea8ff"></span>人物
         <span class="dot" style="background:#46c48a"></span>参照点<br>
         <span class="dot" style="background:#f0a54a"></span>当前目标
-    </div>
-
-    <div id="log" class="hud"></div>
-
-    <div id="panel" class="hud">
-        <h1>具身智能体 · 空白场景</h1>
-        <div class="sub">这个场景只有平地。证明智能体不依赖任何具体资产。</div>
-        <div id="readout">状态 idle</div>
-        <div class="chips">
-            <button data-cmd="去A点">去 A 点</button>
-            <button data-cmd="去B点">去 B 点</button>
-            <button data-cmd="去C点">去 C 点</button>
-            <button data-cmd="先去A点，再去B点，最后去C点">多步：A→B→C</button>
-            <button data-cmd="往左一点">往左一点</button>
-            <button data-cmd="跑起来">跑起来</button>
-            <button data-cmd="停">停</button>
-        </div>
-        <div class="row">
-            <input id="cmd" type="text" placeholder="输入指令后回车，例如「去A点」" autocomplete="off">
-            <button id="mic" title="开启语音" aria-label="开启语音" data-state="off">🎤</button>
-        </div>
-        <div id="transcript"></div>
     </div>
 
     <script type="module" src="./index.ts"></script>

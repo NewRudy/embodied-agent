@@ -130,6 +130,18 @@ export function createEmbodiedScene(options: EmbodiedSceneOptions): EmbodiedScen
     let transcript = '';
     let voiceState: VoiceState = 'off';
     let disposed = false;
+    /**
+     * 最近一帧的运动快照，供 `state()` 返回。
+     *
+     * 为什么不现算：距离和速度只在 `agent.update()` 的返回值里，
+     * 而 update 有副作用（累计超时、卡住计时、速度爬坡），
+     * 不能为了读一个数字再调一次。
+     */
+    let lastOutput: { state: string; distance: number | null; speed: number } = {
+        state: 'idle',
+        distance: null,
+        speed: 0,
+    };
 
     // —— 播报：先建，因为语音需要它提供回声参考 ——
     const speech = options.voice?.speak === false ? null : new SpeechOutput({
@@ -470,6 +482,13 @@ export function createEmbodiedScene(options: EmbodiedSceneOptions): EmbodiedScen
         if (disposed) return;
         try {
             const out = agent.update(dt);
+            // 缓存本帧结果供 state() 使用 —— agent 只把距离和速度放在
+            // update() 的返回值里，不提供 getter。
+            lastOutput = {
+                state: String(out.state),
+                distance: out.distance ?? null,
+                speed: out.movement.speedMetersPerSecond,
+            };
             if (options.player) applyOutput(options.player, out, { locomotion: options.locomotion });
 
             // 队列推进必须在到达回调之前 —— 这样「到达并开始下一步」在同一帧内完成，
@@ -529,9 +548,11 @@ export function createEmbodiedScene(options: EmbodiedSceneOptions): EmbodiedScen
         setGoal: goal => agent.setGoal(goal),
         stop,
         state: () => ({
+            // goalState 直接问 agent：它比 lastOutput 更即时 ——
+            // handleCommand('停') 之后还没 tick 过时，lastOutput 仍是上一帧的 'active'。
             goalState: agent.currentState,
-            distance: null,
-            speed: 0,
+            distance: lastOutput.distance,
+            speed: lastOutput.speed,
             voiceState,
             transcript,
         }),

@@ -76,3 +76,9 @@ export type {
     VoiceStreamEvent,
     VoiceUtterance,
 } from './voice/protocol.ts';
+
+// —— UI ——
+// 悬浮球界面。放在主入口而不是单独子路径：它只用 DOM，不碰 Cesium，
+// 也不在模块加载时创建任何元素（挂载才创建），所以对 Node 端无副作用。
+export { mountOrbUI } from './ui/orb.ts';
+export type { OrbUI, OrbUIOptions } from './ui/orb.ts';

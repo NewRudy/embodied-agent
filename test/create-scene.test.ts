@@ -311,3 +311,34 @@ test('同一个异常连续出现只报一次', () => {
     const warnings = logs.filter(l => l.includes('tick 异常'));
     assert.equal(warnings.length, 1, '每帧刷屏会把控制台冲掉');
 });
+
+// state() 是 UI 的唯一数据来源（悬浮球、日志面板都读它）。
+// 早先这里 distance 写死 null、speed 写死 0，界面上就永远只有「状态 active」——
+// 功能没坏，但用户看不到「还差多远」，会以为没动。
+test('state() 返回真实的距离与速度', () => {
+    const { adapter, pose } = fakeScene();
+    const { player } = fakePlayer();
+    const scene = createEmbodiedScene({ adapter, player: player as never, log: () => {} });
+
+    assert.equal(scene.state().distance, null, '没目标时距离应为 null，而不是 0');
+
+    scene.handleCommand('去3号风机');
+    scene.tick(0.016);
+    const started = scene.state();
+    assert.equal(started.goalState, 'active');
+    assert.equal(started.distance, 100, '目标在正东 100 米');
+
+    // 走一段：距离必须跟着变小，速度必须非零
+    pose.east = 40;
+    pose.yaw = Math.PI / 2;
+    for (let i = 0; i < 30; i++) scene.tick(0.016);
+    const moving = scene.state();
+    assert.equal(moving.distance, 60, '人物前进 40 米，剩余距离应同步变小');
+    assert.ok(moving.speed > 0, `行进中速度应大于 0，实际 ${moving.speed}`);
+
+    scene.handleCommand('停');
+    scene.tick(0.016);
+    const stopped = scene.state();
+    assert.equal(stopped.distance, null);
+    assert.equal(stopped.speed, 0);
+});

@@ -19,6 +19,7 @@ import type { ColliderSource } from 'cesium-player-controller';
 import { createEmbodiedScene, type EmbodiedScene } from '../../src/create-scene.ts';
 import { setupCesiumScene, type ReferenceEntry } from '../../src/cesium-scene.ts';
 import { applyOutput } from '../../src/body.ts';
+import { mountOrbUI } from '../../src/ui/orb.ts';
 import type { BodyLike } from '../../src/body.ts';
 import type { LocomotionProfile } from '../../src/locomotion.ts';
 import type { Vec3 } from '../../src/types.ts';
@@ -43,14 +44,14 @@ interface FarmFixture {
     turbines: FarmTurbine[];
 }
 
+// UI 还没挂载时日志先缓存，挂上后一次性补进去 ——
+// 否则启动阶段的地面实测、模型配置这些信息会丢。
+let orb: ReturnType<typeof mountOrbUI> | null = null;
+const pendingLogs: string[] = [];
 const log = (...args: unknown[]) => {
-    const el = document.getElementById('log');
-    if (el) {
-        const line = document.createElement('div');
-        line.textContent = args.join(' ');
-        el.prepend(line);
-        while (el.childElementCount > 60) el.lastElementChild?.remove();
-    }
+    const line = args.join(' ');
+    if (orb) orb.log(line);
+    else pendingLogs.push(line);
     console.log(...args);
 };
 
@@ -251,39 +252,22 @@ async function main() {
             workletUrl: '/voice/pcm-capture.js',
         },
         log,
-        onState(state) {
-            const mic = document.getElementById('mic') as HTMLButtonElement | null;
-            if (mic) {
-                mic.dataset.state = state.voiceState;
-                mic.textContent = state.voiceState === 'listening' ? '⏹' : '🎤';
-            }
-            const t = document.getElementById('transcript');
-            if (t) t.textContent = state.transcript ? `「${state.transcript}」` : '';
-        },
+        // 状态显示（转写、语音状态、距目标）由 mountOrbUI 自己同步，这里不用管。
     });
 
     const { agent, handleCommand, voice, speech } = scene;
     const player = setup.player as any;
 
     // —— 每帧驱动 ——
+    // 位移和动画由 player.update 推进，目标解算由 scene.tick 推进。
+    // 状态显示（距目标、语音、转写）由 mountOrbUI 的 rAF 自己同步。
     let last = performance.now();
-    const readout = document.getElementById('readout');
     const tickLoop = () => {
         const now = performance.now();
         const dt = Math.min((now - last) / 1000, 0.1);
         last = now;
         scene.tick(dt);
         player.update?.(dt);
-        if (readout) {
-            const clip = player.animation?.stateKey ?? '?';
-            const g = agent.currentGoal;
-            if (!g) readout.textContent = `状态 ${agent.currentState} · 动画 ${clip}`;
-            else {
-                const p = setup.adapter.getPose();
-                const d = Math.hypot(g.position.east - p.east, g.position.north - p.north);
-                readout.textContent = `状态 ${agent.currentState} · 距目标 ${d.toFixed(1)} m · 动画 ${clip}`;
-            }
-        }
     };
     viewer.scene.preUpdate.addEventListener(tickLoop);
 
@@ -316,9 +300,6 @@ async function main() {
     async function runDemo() {
         if (demoRunning) return;
         demoRunning = true;
-        const btn = document.getElementById('demoBtn') as HTMLButtonElement | null;
-        const banner = document.getElementById('demoNote');
-        if (btn) { btn.disabled = true; btn.textContent = '演示中…'; }
         log('=== 自动演示开始 ===');
 
         const waitFor = (predicate: () => boolean, timeoutMs: number) =>
@@ -336,7 +317,7 @@ async function main() {
         await waitFor(() => player.playerIsOnGround, 5_000);
 
         for (const step of DEMO_SCRIPT) {
-            if (banner) banner.textContent = step.note;
+            log(step.note);
             if (step.cmd === '__wait_arrive__') {
                 await waitFor(() => agent.currentState !== 'active', 120_000);
                 continue;
@@ -348,69 +329,20 @@ async function main() {
 
         agent.config.walkSpeed = 1.4;
         demoRunning = false;
-        if (btn) { btn.disabled = false; btn.textContent = '▶ 自动演示'; }
-        if (banner) banner.textContent = '演示结束';
         log('=== 自动演示结束 ===');
     }
 
     // —— UI ——
-    const micBtn = document.getElementById('mic') as HTMLButtonElement | null;
-    const transcriptEl = document.getElementById('transcript');
-    if (voice) {
-        micBtn?.addEventListener('click', () => { void voice.toggle(); });
-    } else if (micBtn) {
-        micBtn.disabled = true;
-        micBtn.title = '语音未启用';
-    }
-    // 语音状态由 scene.onState 驱动（见上方的 onState 配置）
-    void transcriptEl;
-
-    const input = document.getElementById('cmd') as HTMLInputElement | null;
-    input?.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') { setPanelOpen(false); input.blur(); return; }
-        if (e.key !== 'Enter') return;
-        const text = input.value.trim();
-        if (text) { handleCommand(text); input.value = ''; setPanelOpen(false); }
+    // 整套界面来自 src/ui/orb.ts，场景只提供「有哪些快捷指令」。
+    // 换场景不用重写 UI —— 这是「任意场景即插即用」的一部分。
+    const ui = mountOrbUI(scene, {
+        quickCommands: ['去3号风机', '回运维点', '往前走20米', '往左一点', '跑起来', '停'],
+        showLog: true,
     });
-    document.querySelectorAll<HTMLButtonElement>('[data-cmd]').forEach((btn) => {
-        btn.addEventListener('click', () => { handleCommand(btn.dataset.cmd!); setPanelOpen(false); });
-    });
-    document.getElementById('demoBtn')?.addEventListener('click', () => { void runDemo(); });
-
-    // —— 悬浮球：展开 / 收起 ——
-    // 默认只有一颗球。文字输入、快捷指令、日志都藏在展开面板里，
-    // 让场景本身占满视线 —— 这是个 3D 演示，UI 不该抢戏。
-    const panelEl = document.getElementById('panel');
-    const toggleBtn = document.getElementById('toggle') as HTMLButtonElement | null;
-    const logEl = document.getElementById('log');
-    const logBtn = document.getElementById('logBtn') as HTMLButtonElement | null;
-
-    function setPanelOpen(open: boolean) {
-        if (!panelEl || !toggleBtn) return;
-        panelEl.hidden = !open;
-        toggleBtn.setAttribute('aria-expanded', String(open));
-        if (open) input?.focus();
-    }
-
-    toggleBtn?.addEventListener('click', () => setPanelOpen(panelEl?.hidden ?? true));
-
-    // 键盘：/ 打开输入，Esc 收起。输入框里按 / 不应该再触发。
-    document.addEventListener('keydown', (e) => {
-        if (e.key === '/' && document.activeElement !== input) {
-            e.preventDefault();
-            setPanelOpen(true);
-        } else if (e.key === 'Escape' && panelEl && !panelEl.hidden) {
-            setPanelOpen(false);
-        }
-    });
-
-    logBtn?.addEventListener('click', () => {
-        if (!logEl) return;
-        logEl.hidden = !logEl.hidden;
-        logBtn.textContent = logEl.hidden ? '日志' : '收起日志';
-    });
-
-    log('就绪。点右下角 🎤 说话，或按 / 输入指令。');
+    orb = ui;
+    for (const line of pendingLogs.reverse()) ui.log(line);
+    pendingLogs.length = 0;
+    ui.log('就绪。点右下角 🎤 说话，或按 / 输入指令。');
     // 自动化验收要手动逐帧驱动：只调 agent.update 而不施加输出的话，
     // worldMovement 一直是 null，人物不动。applyOutput 一起导出。
     (window as any).__agent = {

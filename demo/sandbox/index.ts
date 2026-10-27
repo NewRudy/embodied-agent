@@ -7,6 +7,7 @@
 // 答案应该是「只要你能回答三个问题」——我在哪、地面多高、某某在哪。
 
 import { createEmbodiedScene } from '../../src/create-scene.ts';
+import { mountOrbUI } from '../../src/ui/orb.ts';
 import type { BodyLike, SceneAdapter, Vec3 } from '../../src/index.ts';
 
 // —— 场景定义 ——
@@ -54,17 +55,15 @@ const body: BodyLike & { move: { east: number; north: number; speedMetersPerSeco
 
 // —— 装配 ——
 
-const logEl = document.getElementById('log');
+// UI 挂载前先缓存日志，挂上后一次补进去。
+let orb: ReturnType<typeof mountOrbUI> | null = null;
+const pendingLogs: string[] = [];
 const log = (...args: unknown[]) => {
-    if (!logEl) return;
-    const line = document.createElement('div');
-    line.textContent = args.join(' ');
-    logEl.prepend(line);
-    while (logEl.childElementCount > 50) logEl.lastElementChild?.remove();
+    const line = args.join(' ');
+    if (orb) orb.log(line);
+    else pendingLogs.push(line);
     console.log(...args);
 };
-
-const readout = document.getElementById('readout');
 
 // 模型意图层：走 vite 代理（网关不支持 CORS 预检，浏览器直连会失败）。
 // 环境变量在构建期注入 —— 浏览器端没有 process.env。
@@ -89,13 +88,7 @@ const scene = createEmbodiedScene({
     agent: { config: { walkSpeed: 4, runSpeed: 8, boundsRadius: 800 } },
     intent: { llm: LLM },
     log,
-    onState: s => {
-        if (!readout) return;
-        const d = s.distance;
-        readout.textContent = d == null
-            ? `状态 ${s.goalState}`
-            : `状态 ${s.goalState} · 距目标 ${d.toFixed(1)} m · 速度 ${s.speed.toFixed(1)} m/s`;
-    },
+    // 状态显示由 mountOrbUI 自己同步。
 });
 
 // —— 渲染 ——
@@ -216,25 +209,12 @@ function tick() {
 }
 requestAnimationFrame(tick);
 
-// —— 输入 ——
-
-const input = document.getElementById('cmd') as HTMLInputElement | null;
-input?.addEventListener('keydown', e => {
-    if (e.key === 'Enter') {
-        scene.handleCommand(input.value);
-        input.value = '';
-    }
-});
-document.querySelectorAll<HTMLButtonElement>('[data-cmd]').forEach(btn => {
-    btn.addEventListener('click', () => scene.handleCommand(btn.dataset.cmd!));
-});
-
 // —— 语音：浏览器内置 Web Speech API，零凭据 ——
-// 这是本包提供的第二套语音后端：不需要 ASR 服务、不需要密钥。
+// 这是本包之外的第二种语音后端：不需要 ASR 服务、不需要密钥。
 // 代价是识别质量依赖浏览器与系统，且只在 Chrome/Edge/Safari 可用。
-const micBtn = document.getElementById('mic') as HTMLButtonElement | null;
-const transcriptEl = document.getElementById('transcript');
-
+//
+// 它不经过 scene.voice（那套要连本包的语音服务），所以这里自己管麦克风状态，
+// 通过 mountOrbUI 的 mic 选项把按钮交给它控制。
 type SpeechRecognitionLike = {
     lang: string; continuous: boolean; interimResults: boolean;
     start(): void; stop(): void;
@@ -245,13 +225,9 @@ type SpeechRecognitionLike = {
 };
 const SpeechRecognitionCtor = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
 
-if (!SpeechRecognitionCtor && micBtn) {
-    micBtn.disabled = true;
-    micBtn.title = '此浏览器不支持内置语音识别，可用文字或接入 ASR 服务';
-}
-
 let recognition: SpeechRecognitionLike | null = null;
 let listening = false;
+let partial = '';
 
 function startVoice() {
     if (!SpeechRecognitionCtor) return;
@@ -263,7 +239,6 @@ function startVoice() {
 
     r.onstart = () => {
         listening = true;
-        if (micBtn) { micBtn.dataset.state = 'listening'; micBtn.textContent = '⏹'; }
         log('🎧 语音已开启（浏览器内置识别）');
     };
     r.onresult = (e: any) => {
@@ -272,23 +247,21 @@ function startVoice() {
             const text = String(res[0].transcript).trim();
             if (!text) continue;
             if (res.isFinal) {
-                if (transcriptEl) transcriptEl.textContent = '';
+                partial = '';
                 scene.handleCommand(text);
-            } else if (transcriptEl) {
-                transcriptEl.textContent = `「${text}」`;
+            } else {
+                partial = text;
             }
         }
     };
     r.onerror = (e: any) => {
         log(`⚠️ 语音：${e.error}`);
-        if (e.error === 'not-allowed') {
-            if (transcriptEl) transcriptEl.textContent = '麦克风权限被拒绝';
-        }
+        if (e.error === 'not-allowed') partial = '麦克风权限被拒绝';
     };
     r.onend = () => {
         // continuous 模式下浏览器仍会因静音自动结束，需要自动重启
         if (listening) { try { r.start(); } catch { /* 已在运行 */ } return; }
-        if (micBtn) { micBtn.dataset.state = 'off'; micBtn.textContent = '🎤'; }
+        partial = '';
     };
     try { r.start(); } catch (err) { log(`⚠️ 无法启动语音：${(err as Error).message}`); }
 }
@@ -297,13 +270,33 @@ function stopVoice() {
     listening = false;
     recognition?.stop();
     recognition = null;
-    if (micBtn) { micBtn.dataset.state = 'off'; micBtn.textContent = '🎤'; }
-    if (transcriptEl) transcriptEl.textContent = '';
+    partial = '';
 }
 
-micBtn?.addEventListener('click', () => { if (listening) stopVoice(); else startVoice(); });
+// —— UI ——
+const ui = mountOrbUI(scene, {
+    quickCommands: ['去A点', '去B点', '去C点', '往左一点', '跑起来', '停'],
+    mic: {
+        onClick() { if (listening) stopVoice(); else startVoice(); },
+        state: () => (listening ? 'listening' : 'off'),
+        disabled: !SpeechRecognitionCtor,
+        disabledReason: '此浏览器不支持内置语音识别，可用文字或接入 ASR 服务',
+    },
+});
+orb = ui;
+for (const line of pendingLogs.reverse()) ui.log(line);
+pendingLogs.length = 0;
+
+// 转写显示：内置识别是临时结果，不走 scene.state().transcript，
+// 所以这里单独往 UI 里塞。用 log 之外的通道 —— 直接写 shadow DOM 里那个元素。
+const transcriptEl = ui.root.querySelector('#transcript') as HTMLElement | null;
+const showPartial = () => {
+    if (transcriptEl) transcriptEl.textContent = partial ? `「${partial}」` : '';
+};
+// 每帧刷新一次临时转写（rAF 已经在跑，这里挂个轻量定时器即可）
+setInterval(showPartial, 200);
 
 log('就绪。试试「去A点」「去B点」「往左一点」「跑起来」「停」。');
 
 // 调试出口
-(window as any).__scene = { scene, pose, body, PLACES };
+(window as any).__scene = { scene, pose, body, PLACES, ui };
