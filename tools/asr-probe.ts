@@ -13,6 +13,11 @@
 //   node tools/asr-probe.ts "回运维点" "去三号风机" "往前走二十米"
 //   node tools/asr-probe.ts --file phrases.txt     # 一行一句
 //   node tools/asr-probe.ts --json "回运维点"      # 机器可读输出
+//   node tools/asr-probe.ts --voice "Flo (中文（中国大陆）)" "去三号风机"
+//                                                  # 换一个嗓音（测 ASR 对不同音色的鲁棒性）
+//
+// 局限补充：换音色只能模拟「不同嗓音」，模拟不了真人的口音、语速、
+// 呼吸和吞音。真人验收仍然只能由真人做。
 //
 // 依赖：macOS 的 say + afconvert（生成合成语音），以及正在运行的语音服务。
 // 服务地址默认 ws://127.0.0.1:5181/voice/stream，用 VOICE_STREAM_URL 覆盖。
@@ -37,7 +42,7 @@ interface ProbeResult {
 function synthesize(text: string, pcmPath: string): void {
     const aiff = '/tmp/asr-probe.aiff';
     const wav = '/tmp/asr-probe.wav';
-    execFileSync('say', ['-v', 'Tingting', '-o', aiff, text]);
+    execFileSync('say', ['-v', VOICE, '-o', aiff, text]);
     execFileSync('afconvert', ['-f', 'WAVE', '-d', 'LEI16@16000', '-c', '1', aiff, wav]);
 
     // 剥 WAV 头：遍历 chunk 找 data。不能写死 44 字节 ——
@@ -48,7 +53,18 @@ function synthesize(text: string, pcmPath: string): void {
         const id = buf.toString('ascii', off, off + 4);
         const size = buf.readUInt32LE(off + 4);
         if (id === 'data') {
-            writeFileSync(pcmPath, buf.subarray(off + 8, off + 8 + size));
+            const pcm = buf.subarray(off + 8, off + 8 + size);
+            // 音色没装时 say 会「成功」产出一个全静音的短文件，不报错。
+            // 不检查的话，后面看到的是「ASR 没返回结果」，完全查不到真正原因。
+            if (pcm.length < 3200) {
+                for (const f of [aiff, wav]) { try { unlinkSync(f); } catch { /* 忽略 */ } }
+                throw new Error(
+                    `音色「${VOICE}」没有产生有效音频（${(pcm.length / 32).toFixed(0)}ms，几乎是静音）。\n`
+                    + `这个音色可能没装到系统里 —— say 不会报错，只会留下一个空文件。\n`
+                    + `看看有哪些可用音色：say -v '?' | grep zh_`,
+                );
+            }
+            writeFileSync(pcmPath, pcm);
             for (const f of [aiff, wav]) { try { unlinkSync(f); } catch { /* 忽略 */ } }
             return;
         }
@@ -110,6 +126,10 @@ function recognize(pcmPath: string, timeoutMs = 20_000): Promise<ProbeResult['he
 
 const args = process.argv.slice(2);
 const jsonOut = args.includes('--json');
+// 嗓音。默认 Tingting；用 --voice 换一个，测 ASR 对不同音色的鲁棒性。
+// 系统可用嗓音：say -v '?' | grep zh_
+const voiceIdx = args.indexOf('--voice');
+const VOICE = voiceIdx >= 0 ? args[voiceIdx + 1] : 'Tingting';
 const fileIdx = args.indexOf('--file');
 
 let phrases: string[];
@@ -121,7 +141,13 @@ if (fileIdx >= 0) {
     }
     phrases = readFileSync(path, 'utf8').split('\n').map(s => s.trim()).filter(Boolean);
 } else {
-    phrases = args.filter(a => !a.startsWith('--') && a !== (fileIdx >= 0 ? args[fileIdx + 1] : ''));
+    // 排除所有「选项名 + 它的值」，否则 --voice Flo 里的 Flo 会被当成一句要读的话
+    const skip = new Set<string>();
+    for (const flag of ['--voice', '--file']) {
+        const i = args.indexOf(flag);
+        if (i >= 0 && args[i + 1]) skip.add(args[i + 1]);
+    }
+    phrases = args.filter(a => !a.startsWith('--') && !skip.has(a));
 }
 
 if (!phrases.length) {
