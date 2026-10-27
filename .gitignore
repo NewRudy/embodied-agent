@@ -11,3 +11,6 @@ dist
 # 但 public/voice 是本包自己的源码，必须提交
 public/*
 !public/voice
+
+# 发布产物，由 npm pack 生成，不进仓库（Release 上有一份）
+*.tgz
