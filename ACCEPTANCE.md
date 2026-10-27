@@ -779,3 +779,59 @@ sandbox 的 `body.setWorldMovement()` 只记录运动指令，真正的位移在
 
 这条也解释了为什么 wind demo 能用手动逐帧驱动而 sandbox 不能：
 wind 的位移在 `playerController.update()` 里，sandbox 在它自己的 rAF 里。
+
+
+## L17 悬浮球 UI · 通过（2026-10-27）
+
+目标里有一条「发布成一个开源包，后续任何一个场景都可以加进去」。之前两个 demo
+各写了一份 UI（wind 208 行 HTML、sandbox 136 行），新场景接进来还得抄第三份。
+`src/ui/orb.ts` 把这块收进包里，接一个场景变成一行。
+
+### 结果
+
+| 项 | 结果 |
+|---|---|
+| 挂载 | `mountOrbUI(scene, { quickCommands })`，shadow root 挂载成功 |
+| 默认形态 | 只有右下角一颗球（56×56），面板隐藏 |
+| 展开 | 点球或按 `/` 展开，焦点自动进输入框；`Esc` 收起 |
+| 快捷指令 | 7 个 chip 正确渲染，点击即执行 |
+| 状态显示 | 「状态 行进中 · 距目标 420.0 m · 1.3 m/s」实时刷新 |
+| 状态中文 | 待命 / 行进中 / 已到达 / 失败 / 已停止（原本直接打印英文枚举） |
+| 语音按钮 | 有 `scene.voice` 时自动接管；sandbox 用自定义 `mic` 选项接浏览器内置识别 |
+| 移动端 | 390×844 下无横向滚动，面板左右各留 14px |
+| 样式隔离 | 全部在 shadow root 内，宿主页面 CSS 不影响它，它也不污染宿主 |
+
+### 这一步发现的三个真 bug
+
+**1. `state()` 返回假距离**
+
+```ts
+state: () => ({ goalState: agent.currentState, distance: null, speed: 0, ... })
+```
+
+`distance` 写死 `null`、`speed` 写死 `0`。旧 demo 各自算距离，所以缺陷被藏住了；
+换成统一 UI 后立刻暴露：界面永远只有「状态 active」，看不到还差多远。
+
+改为缓存 `tick()` 里 `agent.update()` 的返回值 —— `update()` 有副作用
+（累计超时、卡住计时、速度爬坡），不能为了读一个数字再调一次。
+
+**2. 日志面板盖住宿主 HUD**
+
+日志原本固定 `left:16/top:16`，实测正好盖住 sandbox 自己的图例。
+左上角是任何页面放标题/图例/状态栏的首选位置，组件不该占。改成日志成为
+dock 的一行，整块只有一个固定定位点。
+
+**3. ASR 标点污染目标标签**
+
+ASR 定稿带标点：「去3号风机」→「去3号。风机。」。这个字符串被直接当成
+`goal.label`，于是界面显示「3号。风机。」，TTS 还会在句号处停顿。
+已在 `cleanLabel` 里去掉中英文标点。
+
+### 边界
+
+- 浏览器验收用的是 **ego-browser 和真实 Chrome 两套**。ego-browser 的
+  `AudioWorklet.addModule()` 会永久挂起（连 5 行的最小模块也超时），
+  所以语音链路的浏览器侧验收必须用真实 Chrome。这是 ego-browser 的限制，
+  不是本包的问题 —— 同一页面在真实 Chrome 里 `addModule` 立即返回。
+- 真实 Chrome 需要把标签页提到前台（`Page.bringToFront`）。后台标签页
+  `visibilityState: hidden`，rAF 停摆，Cesium 不渲染、瓦片不加载。

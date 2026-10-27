@@ -342,3 +342,19 @@ test('state() 返回真实的距离与速度', () => {
     assert.equal(stopped.distance, null);
     assert.equal(stopped.speed, 0);
 });
+
+// ASR 的定稿结果带标点：「去3号风机」→「去3号。风机。」。
+// 原样当 label 会在 UI 里显示成「3号。风机。」，TTS 还会在句号处停顿。
+test('ASR 带标点的转写不会污染目标标签', () => {
+    const { adapter } = fakeScene();
+    const { player } = fakePlayer();
+    const scene = createEmbodiedScene({ adapter, player: player as never, log: () => {} });
+
+    scene.handleCommand('去3号。风机。');
+    scene.tick(0.016);
+
+    const goal = scene.agent.currentGoal;
+    assert.ok(goal, '应该已经建立目标');
+    assert.equal(goal!.label, '3号风机');
+    assert.ok(!/[。，、！？；：]/.test(goal!.label!), `标签里不该有标点：${goal!.label}`);
+});

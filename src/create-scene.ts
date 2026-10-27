@@ -321,8 +321,9 @@ export function createEmbodiedScene(options: EmbodiedSceneOptions): EmbodiedScen
                 return;
             }
             steps.push({
-                goal: { position: intent.position!, tolerance: 4, label: part },
-                label: part,
+                // label 会出现在 UI 和 TTS 播报里，ASR 带的标点要清掉
+                goal: { position: intent.position!, tolerance: 4, label: cleanLabel(part) },
+                label: cleanLabel(part),
             });
         }
 
@@ -430,13 +431,13 @@ export function createEmbodiedScene(options: EmbodiedSceneOptions): EmbodiedScen
                 break;
             case 'go':
             case 'approach':
-                agent.setGoal({ position: intent.position!, tolerance: 4, label: text });
+                agent.setGoal({ position: intent.position!, tolerance: 4, label: cleanLabel(text) });
                 log(`   → 出发 → ${text}`);
                 break;
             case 'revise':
                 if (!agent.currentGoal) {
                     // 没有活动目标时「往左一点」没有参照，按原地侧移处理
-                    agent.setGoal({ position: intent.position!, tolerance: 4, label: text });
+                    agent.setGoal({ position: intent.position!, tolerance: 4, label: cleanLabel(text) });
                     log('   → 出发（无活动目标，按侧移处理）');
                 } else {
                     agent.reviseGoal({ position: intent.position! });
@@ -567,9 +568,20 @@ export function createEmbodiedScene(options: EmbodiedSceneOptions): EmbodiedScen
     };
 }
 
-/** 把「往前走20米」这类原始指令清成能念的短句。 */
+/**
+ * 把 ASR 转写清成能念、能显示的短标签。
+ *
+ * ASR 的定稿结果带标点：「去3号风机」→「去3号。风机。」。
+ * 原样塞进 goal.label 有两个后果：界面上显示成「3号。风机。」，
+ * TTS 念的时候还会在句号处停顿（「三号。风机」）。实测于豆包 ASR。
+ */
 function cleanLabel(label: string): string {
-    return label.replace(/^(?:去|到|走向|往前走|往|向)/, '').slice(0, 20);
+    return label
+        // 中英文标点全部去掉，句中标点不影响语义
+        .replace(/[。，、！？；：""''（）《》…—,.!?;:"'()<>]/g, '')
+        .replace(/^(?:去|到|走向|往前走|往|向)/, '')
+        .trim()
+        .slice(0, 20);
 }
 
 function failureText(reason: string): string {
