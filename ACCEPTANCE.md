@@ -966,7 +966,10 @@ npm install github:NewRudy/embodied-agent
 | 主入口 import | ✅ `createEmbodiedScene` 可调用 |
 | 用假 adapter 建场景（无 Cesium） | ✅ 返回 `agent, voice, speech, tasks, handleCommand, handleCommandAsync, tick, setGoal, stop, state, dispose` |
 | 意图层降级 | ✅ 打印「未配置模型意图层，只用规则层」而不是崩 |
-| 子入口运行时 import | ✅ `embodied-agent/cesium` 可加载（延迟 import，不缺 cesium 也进得去） |
+| 子入口 `./cesium` 运行时 import | ✅ 可加载（延迟 import，不缺 cesium 也进得去） |
+| 子入口 `./server` 运行时 import | ✅ 导出 `attachVoiceStream`、`openDoubaoStream` 等 21 项 |
+| `voice/pcm-capture.js` 随包发出 | ✅ 2.4 kB，`node --check` 通过，含 `registerProcessor` |
+| 发出的是优化后的帧长 | ✅ 包内 `FRAME_SAMPLES = 640`，与仓库源码逐字节一致 |
 | TypeScript 全量类型检查 | ✅ 装上 `cesium` 后零错误（`skipLibCheck: false`） |
 
 **这条证据的意义**：「任意场景即插即用」不是靠 demo 目录里的相对路径 import 撑起来的，
