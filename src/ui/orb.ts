@@ -196,18 +196,19 @@ const STYLE = `
 #toggle:hover { color: var(--text); border-color: rgba(78, 168, 255, .5); transform: scale(1.08); }
 #toggle[aria-expanded="true"] { color: var(--accent); border-color: rgba(78, 168, 255, .55); }
 
-/* 日志：左上角，默认隐藏 */
+/* 日志：跟着 dock 走，不另设固定定位点。
+   左上角是宿主页面 HUD（图例、标题、状态栏）最常占的位置，
+   固定在那儿会和宿主撞在一起 —— sandbox 的图例就被盖住过。 */
 #logWrap {
-    position: fixed; left: 16px; top: 16px;
-    width: min(320px, calc(100vw - 32px));
-    max-height: 42vh; overflow: auto;
+    width: 100%;
+    max-height: 38vh; overflow: auto;
     padding: 10px 12px;
     font: 11px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace;
     color: var(--muted);
-    background: rgba(18, 22, 28, .72);
+    background: rgba(18, 22, 28, .9);
     border: 1px solid var(--border);
     border-radius: 10px;
-    backdrop-filter: blur(10px);
+    backdrop-filter: blur(12px);
     pointer-events: auto;
 }
 #logWrap[hidden] { display: none; }
@@ -324,8 +325,8 @@ export function mountOrbUI(scene: EmbodiedScene, options: OrbUIOptions = {}): Or
     mic.setAttribute('aria-label', '开启持续语音');
 
     orbRow.append(toggle, mic);
-    dock.append(panel, info, orbRow);
-    root.append(logWrap, dock);
+    dock.append(logWrap, panel, info, orbRow);
+    root.append(dock);
 
     // —— 交互 ——
     function setOpen(open: boolean) {
@@ -354,6 +355,8 @@ export function mountOrbUI(scene: EmbodiedScene, options: OrbUIOptions = {}): Or
             mic.addEventListener('click', () => custom.onClick());
         }
     } else if (scene.voice) {
+        // toggle() 是 async：start 失败时它内部会 stop 并把状态推回 'off'，
+        // 这里不需要 catch —— 语音状态由 sync() 每帧读回来渲染。
         mic.addEventListener('click', () => { void scene.voice!.toggle(); });
     } else {
         mic.disabled = true;
