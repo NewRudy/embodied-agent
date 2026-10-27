@@ -36,6 +36,14 @@ export interface OrbUIOptions {
     /** 额外的键盘快捷键（默认 `/` 展开、`Esc` 收起）。 */
     hotkeys?: boolean;
     /**
+     * 自定义转写来源。不传则用 `scene.state().transcript`。
+     *
+     * 用于**不经过本包语音服务**的后端（比如浏览器内置 Web Speech API）：
+     * 那类识别的临时结果不会进 scene，场景需要自己提供一个读法。
+     * 别在外面直接写 shadow DOM 里的元素 —— 会和本组件的同步互相覆盖。
+     */
+    transcript?: () => string;
+    /**
      * 自己接管麦克风按钮。
      *
      * 不传时：有 `scene.voice` 就调它的 toggle，没有就禁用按钮。
@@ -109,13 +117,6 @@ const STYLE = `
     background: rgba(18, 22, 28, .6);
 }
 #readout:empty { display: none; }
-#note {
-    font-size: 11px; color: var(--warn);
-    padding: 2px 8px; border-radius: 6px;
-    background: rgba(18, 22, 28, .6);
-}
-#note:empty { display: none; }
-
 #panel {
     width: min(340px, calc(100vw - 40px));
     padding: 10px;
@@ -221,11 +222,21 @@ const STYLE = `
 }
 `;
 
+/** 状态枚举 → 给人看的中文。不认识的枚举原样显示，方便排查。 */
+const STATE_LABELS: Record<string, string> = {
+    idle: '待命',
+    active: '行进中',
+    arrived: '已到达',
+    failed: '失败',
+    cancelled: '已停止',
+};
+
 /** 把场景状态渲染成一行小字。没目标时只显示状态。 */
 function formatReadout(state: SceneState): string {
-    if (state.distance == null) return `状态 ${state.goalState}`;
+    const label = STATE_LABELS[state.goalState] ?? state.goalState;
+    if (state.distance == null) return `状态 ${label}`;
     const speed = state.speed > 0.05 ? ` · ${state.speed.toFixed(1)} m/s` : '';
-    return `状态 ${state.goalState} · 距目标 ${state.distance.toFixed(1)} m${speed}`;
+    return `状态 ${label} · 距目标 ${state.distance.toFixed(1)} m${speed}`;
 }
 
 /**
@@ -291,9 +302,7 @@ export function mountOrbUI(scene: EmbodiedScene, options: OrbUIOptions = {}): Or
     const readoutEl = document.createElement('div');
     readoutEl.id = 'readout';
     readoutEl.setAttribute('aria-live', 'polite');
-    const noteEl = document.createElement('div');
-    noteEl.id = 'note';
-    info.append(transcriptEl, readoutEl, noteEl);
+    info.append(transcriptEl, readoutEl);
 
     const orbRow = document.createElement('div');
     orbRow.id = 'orbRow';
@@ -375,8 +384,9 @@ export function mountOrbUI(scene: EmbodiedScene, options: OrbUIOptions = {}): Or
         const readout = formatReadout(state);
         if (readout !== lastReadout) { readoutEl.textContent = readout; lastReadout = readout; }
 
-        const transcript = state.transcript ? `「${state.transcript}」` : '';
-        if (transcript !== lastTranscript) { transcriptEl.textContent = transcript; lastTranscript = transcript; }
+        const transcript = (options.transcript ? options.transcript() : state.transcript) || '';
+        const line = transcript ? `「${transcript}」` : '';
+        if (line !== lastTranscript) { transcriptEl.textContent = line; lastTranscript = line; }
 
         // 麦克风外观：自定义控制器优先，否则跟 scene.voice 的状态走。
         const voiceState = options.mic ? options.mic.state() : state.voiceState;

@@ -310,6 +310,45 @@ const scene = createEmbodiedScene({
 
 ---
 
+## 界面：挂一颗悬浮球
+
+场景接好之后，还差「人怎么跟它说话」。这包自带一套界面，一行挂上：
+
+```ts
+import { mountOrbUI } from 'embodied-agent';
+
+const ui = mountOrbUI(scene, {
+    quickCommands: ['去3号风机', '回运维点', '停'],   // 场景相关的，必须由你给
+});
+```
+
+默认只有右下角一颗球。点它展开输入框和快捷指令，`/` 也能直接唤出，
+`Esc` 收起。状态（「距目标 420.0 m · 1.3 m/s」）和语音转写浮在球上方。
+有 `scene.voice` 时麦克风按钮自动接管；没有就置灰并说明原因。
+
+样式全部写在 shadow root 里 —— 宿主页面怎么写 CSS 都不会串味，
+它也不会污染宿主。不用 React，不注入全局变量。
+
+**接入自己的语音后端**（比如浏览器内置的 Web Speech API）：
+
+```ts
+mountOrbUI(scene, {
+    quickCommands: ['去A点', '停'],
+    mic: {
+        onClick: () => (listening ? stopVoice() : startVoice()),
+        state: () => (listening ? 'listening' : 'off'),
+        disabled: !SpeechRecognitionCtor,
+        disabledReason: '此浏览器不支持内置语音识别',
+    },
+});
+```
+
+`state()` 返回的 `distance` 和 `speed` 是 UI 的数据来源。它们来自最近一帧
+`tick()` 里的 `agent.update()` 结果 —— `update()` 有副作用（累计超时、
+卡住计时、速度爬坡），不能为了读一个数字再调一次。
+
+---
+
 ## 意图层：规则 + 模型
 
 一句话进来，先问规则层（零延迟、零成本），它没把握再问模型。

@@ -276,6 +276,9 @@ function stopVoice() {
 // —— UI ——
 const ui = mountOrbUI(scene, {
     quickCommands: ['去A点', '去B点', '去C点', '往左一点', '跑起来', '停'],
+    // 内置识别的临时结果不进 scene，得自己提供读法。
+    // 早期版本是在外面 setInterval 直接写 #transcript，会和本组件的同步互相覆盖。
+    transcript: () => partial,
     mic: {
         onClick() { if (listening) stopVoice(); else startVoice(); },
         state: () => (listening ? 'listening' : 'off'),
@@ -286,15 +289,6 @@ const ui = mountOrbUI(scene, {
 orb = ui;
 for (const line of pendingLogs.reverse()) ui.log(line);
 pendingLogs.length = 0;
-
-// 转写显示：内置识别是临时结果，不走 scene.state().transcript，
-// 所以这里单独往 UI 里塞。用 log 之外的通道 —— 直接写 shadow DOM 里那个元素。
-const transcriptEl = ui.root.querySelector('#transcript') as HTMLElement | null;
-const showPartial = () => {
-    if (transcriptEl) transcriptEl.textContent = partial ? `「${partial}」` : '';
-};
-// 每帧刷新一次临时转写（rAF 已经在跑，这里挂个轻量定时器即可）
-setInterval(showPartial, 200);
 
 log('就绪。试试「去A点」「去B点」「往左一点」「跑起来」「停」。');
 
