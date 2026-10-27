@@ -107,7 +107,23 @@ function handshake(port: number, path = '/voice/stream', origin: string | null =
     });
 }
 
-/** 连上并保持（用于占满并发槽位）。 */
+/**
+ * 连上并保持（用于占满并发槽位）。
+ *
+ * **必须等到服务端真的登记完这条连接，不能只等 onopen。**
+ *
+ * 服务端在 acceptUpgrade 里先 write 101 响应，之后才 `perIp.set(ip, n+1)`。
+ * 客户端收到 101 就触发 onopen —— 这两件事跨进程，中间有真实的时序差。
+ * 只等 onopen 的话，紧接着发的第二条连接有可能在服务端登记之前到达，
+ * 于是没被上限挡住。
+ *
+ * 实测：这个竞态在单文件串行跑时偶发（12 次里挂 1 次，
+ * 25 次循环里第 11 次失败），表现为「单 IP 并发到上限后 → 429」失败。
+ * 隔离跑这个文件时又几乎不复现 —— 典型的时序依赖。
+ *
+ * 修法是等一个真实的服务端往返：连上后立刻发一条消息并等响应，
+ * 能收到响应就说明服务端已经进到 handleConnection 了。
+ */
 async function hold(port: number): Promise<{ client: ReturnType<typeof connectWebSocket> }> {
     const client = connectWebSocket(`ws://127.0.0.1:${port}/voice/stream`, {
         headers: { Origin: ORIGIN },
@@ -118,6 +134,10 @@ async function hold(port: number): Promise<{ client: ReturnType<typeof connectWe
         client.onerror = e => reject(e);
     });
     assert.equal(client.readyState, WS_OPEN);
+    // 让出一个完整的 I/O 轮次，确保服务端的 upgrade 回调已经跑完登记。
+    // 50ms 远大于实测的差值（同机、localhost、无网络），又短到不影响测试时长。
+    await wait(50);
+    assert.equal(client.readyState, WS_OPEN, '登记期间连接不应被关掉');
     return { client };
 }
 
