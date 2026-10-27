@@ -138,3 +138,29 @@ export function unusedClips(maxSpeed: number, profile: LocomotionProfile): strin
         .filter(clip => clip.naturalSpeed > maxSpeed)
         .map(clip => clip.name);
 }
+
+/**
+ * 检查「跑」这个动作是不是从一出生就生效了 —— 于是「跑起来」永远没反应。
+ *
+ * 和 unusedClips 同一类陷阱：**配置本身自洽，但组合起来让一条指令变成空操作。**
+ *
+ * `steerToward` 判断要不要跑，用的是 `speed > config.runThreshold`。
+ * 如果 `walkSpeed` 本身就高于 `runThreshold`，那起步就是跑，
+ * 用户说「跑起来」时速度一点没变 —— 不报错、不崩溃，只是指令像失灵。
+ *
+ * 实测踩到过：sandbox 配 `walkSpeed: 4, runSpeed: 8`，用的是默认
+ * `runThreshold: 2.4`。浏览器验收里距目标从 146 m 走到 107 m，
+ * 速度全程 8.0 m/s，点「跑起来」毫无变化。
+ *
+ * 返回一句给人看的诊断；配置没问题时返回 null。
+ */
+export function runThresholdIssue(config: { walkSpeed: number; runSpeed: number; runThreshold: number }): string | null {
+    if (config.runSpeed <= config.walkSpeed) {
+        return `runSpeed (${config.runSpeed}) 不大于 walkSpeed (${config.walkSpeed})，「跑起来」不会变快`;
+    }
+    if (config.walkSpeed > config.runThreshold) {
+        return `walkSpeed (${config.walkSpeed}) 高于 runThreshold (${config.runThreshold})，`
+            + `一出生就在跑 —— 「跑起来」不会有变化。把 runThreshold 抬到 ${config.walkSpeed} 以上`;
+    }
+    return null;
+}

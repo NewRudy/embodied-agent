@@ -14,3 +14,7 @@ public/*
 
 # 发布产物，由 npm pack 生成，不进仓库（Release 上有一份）
 *.tgz
+
+# demo 构建产物（vite），与库产物 dist/ 分开
+# 曾经两个都写 dist/，谁后跑谁把对方删光 —— 库产物消失，包就废了
+dist-demo

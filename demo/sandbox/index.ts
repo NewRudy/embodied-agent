@@ -8,6 +8,7 @@
 
 import { createEmbodiedScene } from '../../src/create-scene.ts';
 import { mountOrbUI } from '../../src/ui/orb.ts';
+import { runThresholdIssue } from '../../src/locomotion.ts';
 import type { BodyLike, SceneAdapter, Vec3 } from '../../src/index.ts';
 
 // —— 场景定义 ——
@@ -85,11 +86,31 @@ const LLM = (import.meta.env.EMBODIED_LLM_ENABLED === '1' || location.search.inc
 const scene = createEmbodiedScene({
     adapter,
     player: body,
-    agent: { config: { walkSpeed: 4, runSpeed: 8, boundsRadius: 800 } },
+    agent: {
+        config: {
+            // 4 / 8 是「为了在小画布上看得清」故意调快的，不是真实步行速度。
+            //
+            // runThreshold 必须跟着抬。默认是 2.4，而 walkSpeed 4 已经超过它 ——
+            // 于是 **一出生就在跑**，「跑起来」自然没变化，看起来像指令失灵。
+            // 实测（浏览器验收）：距目标从 146 m 走到 107 m，速度全程 8.0 m/s。
+            // 抬到 6 之后：走路 4 m/s，说「跑起来」才切 8 m/s。
+            walkSpeed: 4,
+            runSpeed: 8,
+            runThreshold: 6,
+            boundsRadius: 800,
+        },
+    },
     intent: { llm: LLM },
     log,
     // 状态显示由 mountOrbUI 自己同步。
 });
+
+// 配置诊断：和 wind demo 的 unusedClips 同一类陷阱 ——
+// 配置各自都对，组合起来让一条指令变成空操作。
+{
+    const issue = runThresholdIssue(scene.agent.config);
+    if (issue) log(`ℹ️ ${issue}`);
+}
 
 // —— 渲染 ——
 

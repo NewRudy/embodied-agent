@@ -28,3 +28,35 @@ jobs:
       # cesium 是 optional peerDependency，省略即可验证「引入即用」。
       - run: npm install --no-audit --no-fund
       - run: npm run check
+
+  # 构建从来没在 CI 里跑过，于是「npm run build 会删光库产物」这个 bug
+  # 一直没被发现 —— 两个构建都写 dist/ 且都设了清空，谁后跑谁删对方。
+  # 这个 job 专门守它：两个构建都跑，然后检查库产物还在。
+  build:
+    name: build (lib + demo 不互相破坏)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm install --no-audit --no-fund
+      # 顺序很重要：先库后 demo。反过来跑一遍也应当成立，见下面的第二次检查。
+      - run: npm run build:lib
+      - run: npm run build
+      - name: 库产物必须存活
+        run: |
+          set -e
+          for f in dist/index.js dist/index.d.ts dist/cesium.js dist/server/index.js \
+                   dist/public/voice/pcm-capture.js; do
+            test -f "$f" || { echo "❌ $f 被 demo 构建删掉了"; exit 1; }
+          done
+          echo "✓ 库产物完整"
+      - name: demo 产物必须生成
+        run: |
+          set -e
+          test -f dist-demo/demo/wind/index.html
+          test -f dist-demo/demo/sandbox/index.html
+          echo "✓ demo 产物完整"
+      - run: node tools/preflight.ts

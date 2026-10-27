@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { locomotionFor, isSpeedOutOfRange, unusedClips, type LocomotionProfile } from '../src/locomotion.ts';
+import { locomotionFor, isSpeedOutOfRange, unusedClips, runThresholdIssue, type LocomotionProfile } from '../src/locomotion.ts';
 
 // 实测自 public/xunjie-assets/glb/UAL1_Standard.glb
 // （node tools/measure-stride.ts ... --height-meters=1.8）
@@ -146,4 +146,31 @@ test('超过 maxTimeScale 之后才开始打滑', () => {
     assert.ok(Math.abs(slipRate(7.0, PROFILE)) < 1e-9, '7.0 仍在能力范围内');
     assert.ok(slipRate(8.0, PROFILE) > 0.05, '8.0 超出约 10%，应当滑');
     assert.ok(slipRate(12.0, PROFILE) > 0.3, '12.0 超出约 40%，明显滑');
+});
+
+// ==================== 配置陷阱：runThreshold ====================
+//
+// 和 unusedClips 同一类：配置各自都对，组合起来让一条指令变成空操作。
+// 实测来源：sandbox demo 配 walkSpeed 4 / runSpeed 8，用默认 runThreshold 2.4，
+// 浏览器里距目标从 146 m 走到 107 m，速度全程 8.0 m/s —— 点「跑起来」毫无变化。
+
+test('walkSpeed 高于 runThreshold 时，报出「一出生就在跑」', () => {
+    const issue = runThresholdIssue({ walkSpeed: 4, runSpeed: 8, runThreshold: 2.4 });
+    assert.ok(issue, '应当报出问题');
+    assert.match(issue!, /一出生就在跑/);
+});
+
+test('runThreshold 抬到 walkSpeed 之上就没问题', () => {
+    assert.equal(runThresholdIssue({ walkSpeed: 4, runSpeed: 8, runThreshold: 6 }), null);
+});
+
+test('runSpeed 不大于 walkSpeed 也报出来', () => {
+    const issue = runThresholdIssue({ walkSpeed: 4, runSpeed: 4, runThreshold: 6 });
+    assert.ok(issue);
+    assert.match(issue!, /不会变快/);
+});
+
+test('默认配置本身是自洽的', () => {
+    // 默认 1.4 / 3.6 / 2.4：走路不会误触发跑步。
+    assert.equal(runThresholdIssue({ walkSpeed: 1.4, runSpeed: 3.6, runThreshold: 2.4 }), null);
 });

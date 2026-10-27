@@ -35,7 +35,14 @@ export default defineConfig({
             : {}),
     },
     build: {
-        outDir: 'dist',
+        // 必须是 dist-demo，不能是 dist ——
+        // dist 是 tsup（build:lib）的产物目录，两边都设了清空：
+        //   vite 的 emptyOutDir: true 会删掉整个 dist/
+        //   tsup 的 clean: true 会删掉整个 dist/
+        // 实测：先 build:lib 再 build，dist/index.js、cesium.js、server/、
+        // public/voice/ 全部消失，只剩 demo 产物 —— 包就废了。
+        // 两个产物目录必须分开，否则谁后跑谁把对方删掉。
+        outDir: 'dist-demo',
         emptyOutDir: true,
         rollupOptions: {
             input: {
