@@ -115,3 +115,26 @@ export function isSpeedOutOfRange(
     const fastest = profile.clips.reduce((a, b) => (b.naturalSpeed > a.naturalSpeed ? b : a));
     return speed / Math.max(fastest.naturalSpeed, 1e-6) > maxTimeScale;
 }
+
+/**
+ * 检查这套 clip 配置里有没有「永远用不上」的动画。
+ *
+ * 反向的陷阱，比 isSpeedOutOfRange 更隐蔽：**你配了跑步动画，但最高速度
+ * 刚好低于它的 naturalSpeed，于是它一辈子不会被选中。**
+ *
+ * 实测踩到过：demo 配 `runSpeed: 3.6`，而 `Sprint_Loop` 的 naturalSpeed 是
+ * 3.621 —— 差 0.021，跑步时永远播 `Jog_Fwd_Loop`。不报错、不崩溃，
+ * 只是「跑起来」看起来没变快多少，很难判断是配置错了还是模型不行。
+ *
+ * 返回永远选不中的 clip 名。空数组表示配置有效。
+ *
+ * @param maxSpeed 场景里实际能达到的最高速度（通常是 runSpeed）。
+ */
+export function unusedClips(maxSpeed: number, profile: LocomotionProfile): string[] {
+    if (profile.clips.length === 0) return [];
+    // clips 按 naturalSpeed 升序；能选中的前提是 naturalSpeed <= maxSpeed。
+    // 第一个 clip 是兜底，即使速度低于它也照样播（只是会减速播放）。
+    return profile.clips.slice(1)
+        .filter(clip => clip.naturalSpeed > maxSpeed)
+        .map(clip => clip.name);
+}

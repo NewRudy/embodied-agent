@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { locomotionFor, isSpeedOutOfRange, type LocomotionProfile } from '../src/locomotion.ts';
+import { locomotionFor, isSpeedOutOfRange, unusedClips, type LocomotionProfile } from '../src/locomotion.ts';
 
 // 实测自 public/xunjie-assets/glb/UAL1_Standard.glb
 // （node tools/measure-stride.ts ... --height-meters=1.8）
@@ -108,4 +108,19 @@ test('自定义倍速上下限生效', () => {
     // 9 m/s 在 Sprint 上要 2.49 倍，放宽到 4 就该用真实值
     const s = locomotionFor(9, PROFILE, { maxTimeScale: 4 });
     assert.ok(Math.abs(s.timeScale - 9 / 3.621) < 1e-9, '放宽上限后应该用真实倍速');
+});
+
+// 反向陷阱：配了动画但最高速度够不到它，于是它永远选不中。
+// 实测踩到：demo 配 runSpeed 3.6，Sprint 的 naturalSpeed 是 3.621 —— 差 0.021，
+// 「跑起来」永远播 Jog，不报错也不崩溃，只是看起来没变快。
+test('最高速度够不到的 clip 会被报出来', () => {
+    assert.deepEqual(unusedClips(3.6, PROFILE), ['Sprint_Loop'], '3.6 < 3.621，Sprint 用不上');
+    assert.deepEqual(unusedClips(3.621, PROFILE), [], '刚好够到就不算闲置');
+    assert.deepEqual(unusedClips(1.4, PROFILE), ['Jog_Fwd_Loop', 'Sprint_Loop'], '只会走路时，两个跑步动画都闲置');
+});
+
+test('闲置检查不把兜底 clip 报成闲置', () => {
+    // Walk 是第一个，即使速度低于它也会被选中（只是减速播放）
+    assert.deepEqual(unusedClips(0.5, PROFILE), ['Jog_Fwd_Loop', 'Sprint_Loop']);
+    assert.ok(!unusedClips(0.5, PROFILE).includes('Walk_Loop'));
 });

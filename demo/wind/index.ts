@@ -21,7 +21,7 @@ import { setupCesiumScene, type ReferenceEntry } from '../../src/cesium-scene.ts
 import { applyOutput } from '../../src/body.ts';
 import { mountOrbUI } from '../../src/ui/orb.ts';
 import type { BodyLike } from '../../src/body.ts';
-import type { LocomotionProfile } from '../../src/locomotion.ts';
+import { unusedClips, type LocomotionProfile } from '../../src/locomotion.ts';
 import type { Vec3 } from '../../src/types.ts';
 
 // 资源从巡界仓库直接引用，避免复制大文件
@@ -71,6 +71,11 @@ const LOCOMOTION: LocomotionProfile = {
         { name: 'Sprint_Loop', naturalSpeed: 3.621 },
     ],
 };
+
+// 演示的最高速度。agent.config.runSpeed 直接引用它，避免两处写死后不一致。
+// 3.6 低于 Sprint 的 3.621，所以「跑起来」实际播的是 Jog ——
+// 这不是 bug，是配置使然。启动时说明白，省得以为是动画坏了。
+const DEMO_RUN_SPEED = 3.6;
 
 async function main() {
     const farm: FarmFixture = await fetch(`${ASSET_BASE}wind/farm.json`).then((r) => r.json());
@@ -244,7 +249,7 @@ async function main() {
         player: setup.player as unknown as BodyLike,
         agent: {
             origin: { east: farm.opsPoint.offset.east, north: farm.opsPoint.offset.north, up: 0 },
-            config: { walkSpeed: 1.4, runSpeed: 3.6, boundsRadius: 1500 },
+            config: { walkSpeed: 1.4, runSpeed: DEMO_RUN_SPEED, boundsRadius: 1500 },
         },
         locomotion: LOCOMOTION,
         voice: {
@@ -342,6 +347,12 @@ async function main() {
     orb = ui;
     for (const line of pendingLogs.reverse()) ui.log(line);
     pendingLogs.length = 0;
+
+    // 配置诊断：配了但永远选不中的动画。不报错、不崩溃，
+    // 只是「跑起来」看起来没变快 —— 很容易被误判成动画坏了。
+    for (const name of unusedClips(DEMO_RUN_SPEED, LOCOMOTION)) {
+        ui.log(`ℹ️ 动画 ${name} 用不上：最高速度 ${DEMO_RUN_SPEED} m/s 低于它的自然速度`);
+    }
     ui.log('就绪。点右下角 🎤 说话，或按 / 输入指令。');
     // 自动化验收要手动逐帧驱动：只调 agent.update 而不施加输出的话，
     // worldMovement 一直是 null，人物不动。applyOutput 一起导出。
