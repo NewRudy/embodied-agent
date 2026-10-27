@@ -935,3 +935,65 @@ AudioWorklet 每攒满一帧才 `postMessage`。说完最后一个字后，剩�
   L13 已证明调 `end_window_size` 到 250 ms 只省 9 ms 且会切碎长句。
 - 样本是单句短指令。长句的定稿更晚，但那是 ASR 断句策略，不是帧长问题。
 - 本机环境（Chrome 与语音服务同机），不含真实网络 RTT。
+
+---
+
+## L20 全新项目从 GitHub 安装并实际使用 · 通过（2026-10-27）
+
+**证据层级：集成**（独立目录、独立 `package.json`、走真实 npm + 真实 GitHub，
+不引用本仓库源码）。不是「`npm pack` 成功」的另一种说法 —— 那一步早就过了，
+但它证明不了装进来的包能不能用。
+
+### 方法
+
+在 `/tmp` 下建一个全新的消费方项目，只做三件事，不碰本仓库：
+
+```bash
+npm install github:NewRudy/embodied-agent
+```
+
+然后**以使用者身份**验证三处，而不是以作者身份看源码：
+
+1. `import { createEmbodiedScene } from 'embodied-agent'` 能否真的建出场景
+2. 子路径 `embodied-agent/cesium`、`embodied-agent/server` 能否解析
+3. `tsc --noEmit` 配 `skipLibCheck: false` 能否通过（会真的检查包里的 `.d.ts`）
+
+### 结果
+
+| 检查 | 结果 |
+|---|---|
+| 安装 | ✅ `added 1 package in 20s`，`dist/` 已由 `prepare` 构建出来 |
+| 主入口 import | ✅ `createEmbodiedScene` 可调用 |
+| 用假 adapter 建场景（无 Cesium） | ✅ 返回 `agent, voice, speech, tasks, handleCommand, handleCommandAsync, tick, setGoal, stop, state, dispose` |
+| 意图层降级 | ✅ 打印「未配置模型意图层，只用规则层」而不是崩 |
+| 子入口运行时 import | ✅ `embodied-agent/cesium` 可加载（延迟 import，不缺 cesium 也进得去） |
+| TypeScript 全量类型检查 | ✅ 装上 `cesium` 后零错误（`skipLibCheck: false`） |
+
+**这条证据的意义**：「任意场景即插即用」不是靠 demo 目录里的相对路径 import 撑起来的，
+是从一个陌生项目里 `npm install` 之后真的能调起来。
+
+### 这一步发现的一个文档缺口
+
+`cesium` 在 `package.json` 里是 `peerDependenciesMeta.optional: true`。
+实测对照：
+
+- 装 registry 上的 `react-dom` → npm **自动**装了它的 peer `react`
+- 装本包 → npm **没有**装 `cesium`
+
+两者都是 peer 依赖，差别只在本包把它标成了 `optional`。**这是刻意设计，不是 bug** ——
+不标 optional 的话，只想用核心的人会被拖进 4MB Cesium。
+
+但副作用是真的：不装 `cesium` 时，运行时能跑，TypeScript 却会在
+`node_modules/embodied-agent/dist/cesium.d.ts` 上报 `TS2307: Cannot find module 'cesium'`。
+这个错出现在**依赖的** `.d.ts` 里，不在使用者自己的代码里，很容易被误判成包坏了。
+
+已在 README 的安装段补上说明和 `npm install cesium` 这一步。
+顺带修正了 README 里三处过期的测试数（226 → 241，实测 `npm test` 为 241/241）。
+
+### 边界
+
+- 只验了 **git 安装**。npm registry 发布后的路径（含 `prepublishOnly` 门禁）
+  仍未走通，因为卡在账号授权层，与代码无关。
+- 消费方是**人为构造的最小项目**，不是真实第三方使用者的项目。
+  它证明了包本身可安装可用，不证明有人在生产里用起来了。
+- 没有测 Node 版本矩阵。只在当前机器的 Node 上跑过。
