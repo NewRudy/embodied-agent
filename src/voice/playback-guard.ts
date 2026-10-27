@@ -67,11 +67,16 @@ function escapeRegExp(s: string): string {
  *
  * 这条规则必须最宽松：播报中被回声过滤掉的语音，如果是「停下」也要能穿透。
  * 误判的代价只是提前停一下，漏判的代价是用户喊停没反应。
+ *
+ * **同音误识要一并认。** 实测豆包（`tools/asr-probe.ts`，三次稳定复现）
+ * 把「停一下」听成「听一下」—— 「停」和「听」同音，ASR 选了更常见的词。
+ * 不认这个错法的话，用户喊停完全没反应，而这恰恰是最不能失灵的指令。
+ * 「停下来」「站住」都能正确识别，所以只需要补这一条。
  */
 export function isPausePhrase(text: string, wakeWord?: string): boolean {
     const stripped = stripWakePrefix(text, wakeWord);
     const t = trimPunctuation((stripped == null ? text : stripped).normalize('NFKC'));
-    return /^(?:请|你)?(?:马上|立即|快|先)?(?:停下(?:来)?|停一下|停住|停|停止(?:移动|前进|走动)?|暂停(?:一下)?|别动|别走了|不要走了|站住|等一下)(?:[，,\s]|$)/.test(t)
+    return /^(?:请|你)?(?:马上|立即|快|先)?(?:停下(?:来)?|停一下|听一下|停住|停|停止(?:移动|前进|走动)?|暂停(?:一下)?|别动|别走了|不要走了|站住|等一下)(?:[，,\s]|$)/.test(t)
         || /^(?:不对|算了|改成|换成|先别)(?:[，,\s]|$)/.test(t);
 }
 

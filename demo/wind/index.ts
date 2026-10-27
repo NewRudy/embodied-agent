@@ -365,6 +365,7 @@ async function main() {
         enu: setup.enu,
         spawn: setup.spawn,
         applyOutput,
+        speech,
     };
 }
 

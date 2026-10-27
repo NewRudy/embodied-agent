@@ -129,3 +129,19 @@ test('reset 之后不再过滤', () => {
     const d = guard.observe({ utterance: utter('正在前往三号风机'), now: 1100 });
     assert.equal(d.kind, 'pass');
 });
+
+// 实测（tools/asr-probe.ts，三次稳定复现）：
+// 「停一下」被豆包听成「听一下」。「停」和「听」同音，ASR 选了更常见的词。
+// 不认这个错法，用户喊停完全没反应 —— 这是最不能失灵的一条指令。
+test('「听一下」作为「停一下」的同音误识被认作停下', () => {
+    assert.equal(isPausePhrase('听一下'), true);
+    assert.equal(isPausePhrase('听一下。'), true);
+    assert.equal(isPausePhrase('听一下，前面有坑'), true, '带后文的也应当算停下');
+});
+
+test('但「听」开头的中性说法不能被误判成停下', () => {
+    // 只有「听一下」这一个短说法认作误识，其余「听…」不动
+    assert.equal(isPausePhrase('听我说'), false);
+    assert.equal(isPausePhrase('听声音'), false);
+    assert.equal(isPausePhrase('听一下这个声音'), false, '长了就不是误识，是真的在说别的');
+});
