@@ -49,6 +49,36 @@ for (const entry of ['embodied-agent', 'embodied-agent/cesium', 'embodied-agent/
     }
 }
 
+// —— 2b. 关键符号必须真的能从入口取到 ——
+//
+// 为什么需要这一条：src/ 里定义了、demo 里用了、测试也过了，
+// 但忘记从 index.ts re-export —— 使用者 import 到的是 undefined。
+// 实测踩到过两次：unusedClips 和 resolveBody。后者尤其糟：
+// 它是让 cesium-player-controller 能用的适配层，不导出等于只有 demo 能用。
+//
+// 这里列的是「使用者必须拿得到」的符号，不是全部导出。
+const REQUIRED_EXPORTS: Record<string, string[]> = {
+    'embodied-agent': [
+        'createEmbodiedScene', 'applyOutput', 'releaseBody', 'resolveBody',
+        'locomotionFor', 'unusedClips', 'runThresholdIssue',
+    ],
+};
+for (const [entry, symbols] of Object.entries(REQUIRED_EXPORTS)) {
+    try {
+        const out = execFileSync(process.execPath, ['-e',
+            `import('${entry}').then(m => {`
+            + `const miss = ${JSON.stringify(symbols)}.filter(s => typeof m[s] === 'undefined');`
+            + `console.log(JSON.stringify(miss)); })`,
+        ], { encoding: 'utf8', cwd: root, timeout: 30_000 });
+        const missing = JSON.parse(out.trim()) as string[];
+        add(`关键导出 ${entry}`, missing.length === 0,
+            missing.length ? `缺 ${missing.join(', ')}（检查 src/index.ts 有没有 re-export）` : `${symbols.length} 个都在`);
+    } catch (e) {
+        const msg = e instanceof Error ? (e as { stderr?: string }).stderr ?? e.message : String(e);
+        add(`关键导出 ${entry}`, false, msg.split('\n')[0]!.slice(0, 120));
+    }
+}
+
 // —— 3. 打包内容 ——
 let packList: string[] = [];
 try {

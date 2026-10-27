@@ -49,7 +49,7 @@ export type {
 } from './types.ts';
 
 // —— 施加到角色身体（引擎无关） ——
-export { applyOutput, releaseBody, STOP_MOVEMENT } from './body.ts';
+export { applyOutput, releaseBody, resolveBody, STOP_MOVEMENT } from './body.ts';
 export type { BodyLike, ApplyOptions } from './body.ts';
 export { locomotionFor, isSpeedOutOfRange, unusedClips, runThresholdIssue } from './locomotion.ts';
 export type { LocomotionClip, LocomotionProfile, LocomotionState, LocomotionOptions } from './locomotion.ts';
