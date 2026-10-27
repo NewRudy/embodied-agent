@@ -9,24 +9,24 @@
 说一句「去 3 号风机」，人物自己走过去；走到一半说「往左一点」，它平滑偏过去，**不会停下来重算**。
 说话时它也在回话，你随时可以打断它。
 
-> **状态**：`0.1.0`，**开源**（MIT）。通过 git 安装，尚未发布到 npm。
+> **状态**：`0.1.0`，**开源**（MIT）。已发布为 [GitHub Release](https://github.com/NewRudy/embodied-agent/releases/tag/v0.1.0)，
+> 可直接安装。**未发 npm registry** —— 卡在作者账号登录，不是代码或配置问题。
 > 已验证的范围与证据层级见 [`ACCEPTANCE.md`](ACCEPTANCE.md) —— 请按那份文档判断可用性，
 > 不要按这个 README 的宣传语判断。
 >
 > **真人语音还没验证过。** 已验到真实 Chrome + 真实豆包 ASR 全链路
-> （L15 声学输入用合成语音，L18 端到端 571 ms），差真人这一段。
+> （L15 声学输入用合成语音，L18 端到端 571 ms，L19 优化到 528 ms），差真人这一段。
 > 自己跑一遍用 [`VOICE-CHECKLIST.md`](VOICE-CHECKLIST.md)。
->
-> **npm 发布**：包名 `embodied-agent` 在 npm 上可用，`npm publish --dry-run` 已全程通过
-> （prepublishOnly → 构建 → 15 项发布门禁 → 188 kB / 19 文件）。
-> 只差作者账号登录，不是代码或配置问题。在那之前用 git 安装即可。
 
 ---
 
 ## 别人怎么引入这个包
 
 ```bash
-# 从 GitHub 安装（尚未发 npm，这样装即可）
+# 方式一：从 Release 装预构建 tarball（推荐，4 秒，不用构建）
+npm install https://github.com/NewRudy/embodied-agent/releases/download/v0.1.0/embodied-agent-0.1.0.tgz
+
+# 方式二：从仓库装（会跑 prepare 构建，约 20 秒）
 npm install github:NewRudy/embodied-agent
 ```
 

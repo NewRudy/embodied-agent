@@ -1000,3 +1000,73 @@ npm install github:NewRudy/embodied-agent
 - 消费方是**人为构造的最小项目**，不是真实第三方使用者的项目。
   它证明了包本身可安装可用，不证明有人在生产里用起来了。
 - 没有测 Node 版本矩阵。只在当前机器的 Node 上跑过。
+
+---
+
+## L21 发布到 GitHub Release 并验证可安装 · 通过（2026-10-27）
+
+**证据层级：部署 + 集成**。发布动作属于「部署」；从发布产物安装并 import
+属于「集成」。不是 `npm publish --dry-run` 的重复 —— 那一步证明的是门禁能过，
+证明不了产物挂上去之后别人能装。
+
+### 为什么要走这条
+
+`npm publish` 需要 npm 账号登录，`gh` token 又没有 `write:packages`。
+两条 registry 路径都卡在**账号授权层**，与代码无关。
+GitHub Release 不需要额外授权（`repo` scope 就够），是唯一能自己走完的真实分发路径。
+
+### 方法
+
+```bash
+npm pack                                    # 产物 192 kB / 19 文件
+git tag -a v0.1.0 && git push origin v0.1.0
+gh release create v0.1.0 embodied-agent-0.1.0.tgz --notes-file ...
+```
+
+发布前手动跑完整门禁（注意：`npm pack` **只跑 `prepare`（构建），不跑
+`prepublishOnly`** —— 门禁只在 `npm publish` 时触发，所以必须手动补）：
+
+| 门禁 | 结果 |
+|---|---|
+| 类型检查 | ✅ 零错误 |
+| 单元测试 | ✅ 241/241 |
+| preflight 15 项 | ✅ 全过（含「源码无硬编码密钥」「包里没有 .env」） |
+
+### 结果
+
+在全新空目录里从 Release URL 安装：
+
+```bash
+npm install https://github.com/NewRudy/embodied-agent/releases/download/v0.1.0/embodied-agent-0.1.0.tgz
+```
+
+| 检查 | 结果 |
+|---|---|
+| 安装耗时 | ✅ 4 s（对比 git 安装 20 s —— tarball 自带 `dist/`，不需要跑 `prepare`） |
+| 主入口 import | ✅ `createEmbodiedScene` 可调用 |
+| `./cesium` + `./server` 同时引入 | ✅ 三个入口共存无冲突 |
+| `tsc --noEmit`（`skipLibCheck: false`） | ✅ 零错误 |
+| 包内 worklet 帧长 | ✅ `FRAME_SAMPLES = 640`（L19 的优化确实随包发出） |
+
+Release 地址：https://github.com/NewRudy/embodied-agent/releases/tag/v0.1.0
+
+### 这一步的一处自我纠错
+
+第一次跑类型检查时，`./server` 入口报了 9 条 `TS2591: Cannot find name 'Buffer'`，
+我一度判断成「包的类型声明有缺陷」。**这个判断是错的。**
+
+验证方式：在同一个 tsconfig 下写一个只用 `node:http` 和 `Buffer` 的
+`plain.ts` —— 它也报同样的错。说明是**我的测试配置**没引入 node 类型，
+不是包的问题。tsconfig 加上 `"types": ["node"]` 后零错误。
+
+记录在这里是因为它是个容易犯的误判：`.d.ts` 报错出现在 `node_modules` 里时，
+第一反应总是「包坏了」，但很可能只是使用方没配 `types`。
+
+### 边界
+
+- **这是 GitHub Release，不是 npm registry。** 使用者需要写完整 tarball URL，
+  不能 `npm install embodied-agent`。对「开源包」的发布要求来说，
+  这是**部分满足**：产物可获取、可安装、版本固定、有 tag 和 release notes，
+  但没有 registry 的发现性（搜不到）、没有 `npm install <name>` 的便利。
+- Release notes 里明确写了「真人语音未验证」，没有把合成语音的结果说成真人。
+- 仍未验 Node 版本矩阵，只在本机 Node 上跑过。
