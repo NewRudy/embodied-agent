@@ -124,3 +124,26 @@ test('闲置检查不把兜底 clip 报成闲置', () => {
     assert.deepEqual(unusedClips(0.5, PROFILE), ['Jog_Fwd_Loop', 'Sprint_Loop']);
     assert.ok(!unusedClips(0.5, PROFILE).includes('Walk_Loop'));
 });
+
+// 「脚打滑」的定量定义：脚相对地面走过的距离 ÷ 人物实际位移 - 1。
+// 只要倍速没被 clamp，这个值恒为 0 —— 这是 locomotion 模块存在的全部意义。
+// 被 clamp 之后才按比例恶化，下面把边界钉住，防止以后调参数时悄悄破坏。
+function slipRate(speed: number, profile: LocomotionProfile, opts = {}) {
+    const s = locomotionFor(speed, profile, opts);
+    const clip = profile.clips.find(c => c.name === s.clip)!;
+    const footSpeed = clip.naturalSpeed * s.timeScale;
+    return (speed - footSpeed) / speed;
+}
+
+test('倍速没被 clamp 时脚完全不滑', () => {
+    for (const v of [1.4, 2.0, 2.882, 3.6]) {
+        assert.ok(Math.abs(slipRate(v, PROFILE)) < 1e-9, `${v} m/s 不该打滑`);
+    }
+});
+
+test('超过 maxTimeScale 之后才开始打滑', () => {
+    // Sprint 3.621 × 上限 2.0 = 7.242，超过这个速度才开始滑
+    assert.ok(Math.abs(slipRate(7.0, PROFILE)) < 1e-9, '7.0 仍在能力范围内');
+    assert.ok(slipRate(8.0, PROFILE) > 0.05, '8.0 超出约 10%，应当滑');
+    assert.ok(slipRate(12.0, PROFILE) > 0.3, '12.0 超出约 40%，明显滑');
+});
