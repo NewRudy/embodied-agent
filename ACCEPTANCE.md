@@ -1131,3 +1131,74 @@ Release 地址：https://github.com/NewRudy/embodied-agent/releases/tag/v0.1.0
 - 24 条是我按口语习惯构造的，不是从真实用户日志里挖的。
   覆盖的是常见形态，不保证穷尽。
 - 「我们回去吧」仍未识别。要支持得知道「回去」指哪里，属于歧义消解，不是漏写规则。
+
+---
+
+## L23 wind demo 真实浏览器验收 · 通过（2026-10-27）
+
+**证据层级：浏览器集成**（真实 Chrome、真实 Cesium 3D Tiles、真实物理引擎）。
+这是第一次在浏览器里把 wind demo 完整跑通 —— 之前只有构建通过和 sandbox 验收。
+
+### 为什么这一项之前是空的
+
+L16 验的是 sandbox（2D canvas、无 Cesium、无物理），L17 验的是悬浮球 UI。
+wind demo 这个「人物在真实 3D 场景里跑」的核心演示，**从来没在浏览器里验过**。
+一验就发现它是坏的。
+
+### 发现的问题（按严重度）
+
+| # | 现象 | 根因 | 严重度 |
+|---|---|---|---|
+| 1 | 人物站着不动 | 引擎没有 `setWorldMovement`，每帧抛异常被 try/catch 吞掉 | 致命 |
+| 2 | 人物走反方向 | 位移方向由**相机朝向**决定，`addYaw` 只改 player | 致命 |
+| 3 | 动画一直是 idle | 引擎叫 `playPlayerAnimationByName`，接口写的是 `...ByClipName` | 高 |
+| 4 | `pose.yaw` 恒为 0 | 适配器读 `getPlayerHeading()`，引擎只有 `getYaw()` | 高 |
+| 5 | 「跑起来」无变化 | `walkSpeed` 4 高于默认 `runThreshold` 2.4，一出生就在跑 | 中 |
+
+### 关键根因：位移方向不由 player.yaw 决定
+
+读引擎源码（`cesium-player-controller/dist/index.js` 的 `updatePlayer`）：
+
+```js
+const camYaw = this.getCameraYaw();
+let dirE = moveAxes.y * Math.sin(camYaw) + moveAxes.x * Math.cos(camYaw);
+let dirN = moveAxes.y * Math.cos(camYaw) - moveAxes.x * Math.sin(camYaw);
+```
+
+**位移方向由相机朝向决定。** `addYaw()` 只改 `this.yaw`（player 朝向），
+相机是另一个变量 `cam.theta`。实测关系：`camYaw = cam.theta - π`。
+
+所以「把人物转向目标」必须改 `cam.theta`，改 player 的 yaw 没有用 ——
+表现是「朝向看起来转了，人还是朝反方向走」。
+
+### 为什么这些 bug 能藏这么久
+
+所有跨引擎调用都写成 `body.xxx?.()`。名字对不上时**不报错、不崩溃**，
+只是功能不生效。唯一的线索是 tick 的 try/catch 里那一行日志
+「⚠️ tick 异常（已跳过本帧）」，而它设计上只报一次。
+
+修法不是把 `?.` 去掉（那会让可选方法变成必需），而是加一层
+`resolveBody()` 做名字适配，并让 `setWorldMovement` 变成可选、
+缺失时降级到 `setInput` 驱动。
+
+### 浏览器验收结果
+
+真实 Chrome，`localhost:5200`，Cesium 3D Tiles 地形已加载：
+
+| 项 | 结果 |
+|---|---|
+| 页面加载 | ✅ 人物、地形、风机都渲染出来 |
+| 点「去3号风机」 | ✅ 状态转「行进中」，相机转向目标 |
+| 距离变化 | ✅ 409.6 → 384.7 → 344.7 m，**持续减小** |
+| 动画 | ✅ idle → walking → running |
+| 「跑起来」 | ✅ 1.4 → 3.6 m/s |
+| 「停」 | ✅ 状态转「已停止」，动画回 idle |
+| tick 异常 | ✅ 消失 |
+
+### 边界
+
+- **只验了单机、本机、无网络延迟**。没有多用户、没有移动端、没有生产部署。
+- **语音链路没在这一项里验**。用的是输入框文字指令。语音要真实麦克风，见 L15/L18 和 VOICE-CHECKLIST。
+- 3 号风机距离 400+ 米，实测没等到真正走完（只验了距离持续减小）。
+  长距离下的减速、到达、超时行为仍只有单元测试覆盖。
+- 「脚打滑」这类视觉质量没有量化。截图看是正常的，但没有逐帧对比。
