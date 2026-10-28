@@ -128,8 +128,10 @@ try {
 
 // —— 6. 元数据 ——
 for (const field of ['repository', 'homepage', 'bugs', 'author', 'license'] as const) {
-    add(`元数据 ${field}`, Boolean((pkg as Record<string, unknown>)[field]),
-        String((pkg as Record<string, unknown>)[field] ?? '缺失'));
+    const value = (pkg as Record<string, unknown>)[field];
+    const detail = value == null ? '缺失'
+        : typeof value === 'object' ? JSON.stringify(value) : String(value);
+    add(`元数据 ${field}`, Boolean(value), detail);
 }
 
 // —— 输出 ——

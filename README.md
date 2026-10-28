@@ -218,6 +218,15 @@ interface BodyLike {
 `setInput` 是给 `cesium-player-controller` 专用的（它的动画只读按键轴）。
 其他引擎不需要实现它。
 
+如果你的引擎就是 `cesium-player-controller`，**不用手写这套适配**：
+包里带了 `resolveBody(player)`，把引擎的 player 对象包一层就得到符合 `BodyLike`
+的实例（方向轴、朝向读写、动画方法名的差异都在里面抹平）。
+配套两个体检函数：
+
+- `runThresholdIssue(config)` —— 检查速度配置。`walkSpeed` 高过 `runThreshold`
+  会「一出生就在跑」，`runSpeed` 不大于 `walkSpeed` 会「跑步没变快」，都不报错、极难排查。
+- `unusedClips(profile)` —— 报告配置声明了但模型里不存在的动画 clip。
+
 `playPlayerAnimationByClipName` 传 `null` 表示**解锁**，把动画选择权交还引擎。
 外部接管时必须能锁 —— 否则引擎每帧按按键重选一次，下发的 clip 立刻被覆盖。
 
@@ -466,6 +475,9 @@ await scene.handleCommandAsync('先去A点，再去B点，最后去C点');
 - 播报期间记录参考文本与时间窗
 - 转写与参考文本相似且时间重叠 → 判为回声丢弃
 - **但「停」类短语永远穿透** —— 用户喊停的优先级高于一切
+- **「停」不等定稿**：临时转写一出现就执行（`onCommand` 带 `partial: true`）。
+  定稿要等 ASR 静音判定，实测说完到定稿约 0.7 秒——喊停的这 0.7 秒人物还在走。
+  移动指令仍然只认定稿（临时结果会反复变化，「去3号」→「去3号风机」）
 
 **边界**：无法区分「同一句话的真人和回声」。这是物理限制，不是实现缺陷。
 
