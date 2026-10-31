@@ -1,81 +1,82 @@
 {
-    "name": "embodied-agent",
-    "version": "0.1.0",
-    "type": "module",
-    "description": "具身智能体：目标驱动的数字人漫游层。说一句话，人物自己走过去；语音全双工。",
-    "keywords": [
-        "embodied",
-        "agent",
-        "cesium",
-        "digital-human",
-        "voice",
-        "asr"
-    ],
-    "license": "MIT",
-    "author": "吴廷鑫 (Wu Tingxin)",
-    "repository": {
-        "type": "git",
-        "url": "git+https://github.com/NewRudy/embodied-agent.git"
+  "name": "embodied-agent",
+  "version": "0.1.1",
+  "type": "module",
+  "description": "具身智能体：目标驱动的数字人漫游层。说一句话，人物自己走过去；语音全双工。",
+  "keywords": [
+    "embodied",
+    "agent",
+    "cesium",
+    "digital-human",
+    "voice",
+    "asr"
+  ],
+  "license": "MIT",
+  "author": "吴廷鑫 (Wu Tingxin)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NewRudy/embodied-agent.git"
+  },
+  "homepage": "https://github.com/NewRudy/embodied-agent#readme",
+  "bugs": {
+    "url": "https://github.com/NewRudy/embodied-agent/issues"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "VOICE-CHECKLIST.md",
+    "ACCEPTANCE.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     },
-    "homepage": "https://github.com/NewRudy/embodied-agent#readme",
-    "bugs": {
-        "url": "https://github.com/NewRudy/embodied-agent/issues"
+    "./cesium": {
+      "types": "./dist/cesium.d.ts",
+      "import": "./dist/cesium.js"
     },
-    "engines": {
-        "node": ">=22.18"
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "import": "./dist/server/index.js"
     },
-    "files": [
-        "dist",
-        "README.md",
-        "VOICE-CHECKLIST.md",
-        "ACCEPTANCE.md",
-        "LICENSE"
-    ],
-    "exports": {
-        ".": {
-            "types": "./dist/index.d.ts",
-            "import": "./dist/index.js"
-        },
-        "./cesium": {
-            "types": "./dist/cesium.d.ts",
-            "import": "./dist/cesium.js"
-        },
-        "./server": {
-            "types": "./dist/server/index.d.ts",
-            "import": "./dist/server/index.js"
-        },
-        "./voice/pcm-capture.js": "./dist/public/voice/pcm-capture.js"
-    },
-    "peerDependencies": {
-        "cesium": ">=1.110"
-    },
-    "peerDependenciesMeta": {
-        "cesium": {
-            "optional": true
-        }
-    },
-    "publishConfig": {
-        "access": "public"
-    },
-    "scripts": {
-        "test": "node --test \"test/*.test.ts\"",
-        "typecheck": "tsc --noEmit -p tsconfig.json",
-        "dev": "vite --config vite.config.ts",
-        "build": "vite build --config vite.config.ts",
-        "build:lib": "tsup",
-        "voice": "node --env-file-if-exists=.env server/index.ts",
-        "voice:check": "node -e \"import('./server/asr.ts').then(m=>console.log(m.voiceConfigured()?'ASR 已配置':'ASR 未配置'))\"",
-        "check": "npm run typecheck && npm test",
-        "prepare": "npm run build:lib",
-        "prepublishOnly": "npm run check && npm run build:lib && node tools/preflight.ts",
-        "preflight": "node tools/preflight.ts"
-    },
-    "devDependencies": {
-        "@types/node": "^22.20.5",
-        "cesium": "^1.146.0",
-        "cesium-player-controller": "^0.2.1",
-        "tsup": "^8.5.1",
-        "typescript": "^5.9.3",
-        "vite": "^7.3.7"
+    "./voice/pcm-capture.js": "./dist/public/voice/pcm-capture.js",
+    "./package.json": "./package.json"
+  },
+  "peerDependencies": {
+    "cesium": ">=1.110"
+  },
+  "peerDependenciesMeta": {
+    "cesium": {
+      "optional": true
     }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.ts\"",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "dev": "vite --config vite.config.ts",
+    "build": "vite build --config vite.config.ts",
+    "build:lib": "tsup",
+    "voice": "node --env-file-if-exists=.env server/index.ts",
+    "voice:check": "node -e \"import('./server/asr.ts').then(m=>console.log(m.voiceConfigured()?'ASR 已配置':'ASR 未配置'))\"",
+    "check": "npm run typecheck && npm test",
+    "prepare": "npm run build:lib",
+    "prepublishOnly": "npm run check && npm run build:lib && node tools/preflight.ts",
+    "preflight": "node tools/preflight.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "cesium": "^1.146.0",
+    "cesium-player-controller": "^0.2.1",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.7"
+  }
 }

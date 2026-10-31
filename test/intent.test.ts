@@ -301,3 +301,15 @@ test('口语调速不能吃掉「跑过去看看那个风机」这种带目标�
     const r = parseIntent('跑过去看看那个风机', ctx());
     assert.notEqual(r?.rule, 'pace-run', '带目标的话不该被当成调速');
 });
+
+test('不带 context 也能安全解析（npm 装包后的第一触点）', () => {
+    // 0.1.0 里 parseIntent('停') 在 ctx.goal 上炸 TypeError —— TS 用户会被编译器拦住，
+    // JS 用户直接崩。0.1.1 给 ctx 加了默认值，第一触点必须丝滑。
+    const stop = parseIntent('停');
+    assert.equal(stop?.action, 'stop');
+    assert.equal(parseIntent('停一下')?.action, 'stop');
+    assert.equal(parseIntent('先别走了')?.action, 'stop', '否定句安全落停止（不误出发）');
+    // 相对移动：无上下文时以兜底位姿解析（数字上无意义但不崩溃）
+    const walk = parseIntent('往前走10米');
+    assert.equal(walk?.action, 'go');
+});

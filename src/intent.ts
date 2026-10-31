@@ -112,7 +112,26 @@ export function parseAbsoluteDirection(bare: string): { key: string; deg: number
  * 规则顺序很重要：先判「修正」，再判「停止」，最后才是「移动」。
  * 因为「往左一点」包含「左」，「停下」包含「下」，顺序错了会误判。
  */
-export function parseIntent(raw: string, ctx: ParseContext): Intent | null {
+/**
+ * 没有场景上下文时的兜底。
+ *
+ * 为什么需要：parseIntent 的签名要求传 ParseContext，TS 用户会被编译器逼着传，
+ * 但 JS 用户（以及所有第一次 `npm install` 后 node -e 里试一下的人）
+ * 会直接 `parseIntent('停')` —— 然后在 `ctx.goal` 上炸出 TypeError。
+ * 第一触点就崩溃对一个公开包是硬伤。
+ *
+ * 兜底语义：停/转向/否定这类指令不需要场景，解析结果完全正确；
+ * 相对移动会以原点为参考（数字上是错的，但调用方本来就该传真实位姿）；
+ * 参照物解析返回 null（没听懂 → 上层澄清），绝不瞎执行。
+ */
+const EMPTY_PARSE_CONTEXT: ParseContext = Object.freeze({
+    pose: Object.freeze({ east: 0, north: 0, yaw: 0 }),
+    goal: null,
+    resolve: () => null,
+    defaultStep: 10,
+});
+
+export function parseIntent(raw: string, ctx: ParseContext = EMPTY_PARSE_CONTEXT): Intent | null {
     const text = raw.normalize('NFKC').trim();
     if (!text) return null;
     const bare = text.replace(STRIP, '');
