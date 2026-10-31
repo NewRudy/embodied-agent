@@ -23,10 +23,13 @@
 ## 别人怎么引入这个包
 
 ```bash
-# 方式一：从 Release 装预构建 tarball（推荐，4 秒，不用构建）
-npm install https://github.com/NewRudy/embodied-agent/releases/download/v0.1.0/embodied-agent-0.1.0.tgz
+# 方式一：从 npm 装（最简单，1 秒）
+npm install embodied-agent
 
-# 方式二：从仓库装（会跑 prepare 构建，约 20 秒）
+# 方式二：从 Release 装预构建 tarball（不依赖 npm registry）
+npm install https://github.com/NewRudy/embodied-agent/releases/download/v0.1.1/embodied-agent-0.1.1.tgz
+
+# 方式三：从仓库装（会跑 prepare 构建，约 20 秒）
 npm install github:NewRudy/embodied-agent
 ```
 
