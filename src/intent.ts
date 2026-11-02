@@ -7,7 +7,7 @@
 // 输出不是「命令」，是「目标操作」——和运动层的单位保持一致。
 
 import type { Vec3 } from './types.ts';
-import type { Intent, ParseContext } from './intent-types.ts';
+import type { ActionKey, Intent, ParseContext } from './intent-types.ts';
 import { CONFIDENCE_THRESHOLD, type IntentDecider } from './intent-types.ts';
 
 export type { Intent, IntentAction, ParseContext, ReferenceResolver } from './intent-types.ts';
@@ -62,6 +62,31 @@ function extractMeters(text: string): number | null {
             const [a, b] = s.split('十');
             return (cn[a] ?? 0) * 10 + (cn[b] ?? 0);
         }
+    }
+    return null;
+}
+
+/**
+ * 一次性动作 → 语义键。返回 null 表示不是动作指令。
+ *
+ * 这里只做**语义识别**（跳/舞/拳/滚/捡/互动），不知道也**不该知道**
+ * 具体模型里的动画 clip 叫什么名字 —— clip 映射是场景配置（每个模型不一样）。
+ *
+ * 顺序敏感：「跳舞/跳个舞」必须排在「跳」前面，否则被跳规则吃掉。
+ */
+const ACTION_PATTERNS: Array<{ re: RegExp; key: ActionKey }> = [
+    { re: /^(?:你|给我|来|先|再)?跳(?:个|支|段)?舞(?:吧|呀|啊)?$/, key: 'dance' },
+    { re: /^(?:你|给我|来|先|再)?跳(?:一下|一跳|跳|个|两下|几下|起来)(?:吧|呀|啊)?$/, key: 'jump' },
+    { re: /^(?:你|给我|来|先|再)?蹦(?:一下|跶一下|跶跶)(?:吧|呀)?$/, key: 'jump' },
+    { re: /^(?:你|给我|来|先|再)?(?:出拳|打拳|打一拳|来一拳|拳击|挥拳)(?:吧|呀|啊)?$/, key: 'punch' },
+    { re: /^(?:你|给我|来|先|再)?(?:翻滚|翻个跟头|打个滚|滚一下|打个滚儿|侧翻)(?:吧|呀|啊)?$/, key: 'roll' },
+    { re: /^(?:你|给我|来|先|再|把它)?(?:捡起来|捡一下|拾起来|捡起来吧|拾取)(?:吧|呀|啊)?$/, key: 'pickup' },
+    { re: /^(?:你|给我|来|先|再)?(?:打个招呼|互动一下|互动|交互一下)(?:吧|呀|啊)?$/, key: 'interact' },
+];
+
+function matchActionClip(bare: string): { key: ActionKey } | null {
+    for (const { re, key } of ACTION_PATTERNS) {
+        if (re.test(bare)) return { key };
     }
     return null;
 }
@@ -161,6 +186,14 @@ export function parseIntent(raw: string, ctx: ParseContext = EMPTY_PARSE_CONTEXT
         return { ...base, action: 'stop', rule: 'stop-negation' };
     }
 
+    // —— 1.5 一次性动作（跳一下/跳个舞/出拳……） ——
+    //
+    // 为什么放在修正之前：这些指令不需要场景上下文（不用知道目标在哪），
+    // 越早命中越好。**顺序铁律：「跳舞」必须先于「跳」判断**，
+    // 否则「跳个舞」会被跳规则吃掉，人物原地蹦跶而不跳舞。
+    const act = matchActionClip(bare);
+    if (act) return { ...base, action: 'act', clip: act.key, rule: `act-${act.key}` };
+
     // —— 2. 中途修正（只在有活动目标时成立） ——
     // 修正必须相对「当前目标」偏移，而不是相对人物位置。
     // 按人物位置偏移会把目标拽到脚下，立刻误判到达。
@@ -242,6 +275,26 @@ export function parseIntent(raw: string, ctx: ParseContext = EMPTY_PARSE_CONTEXT
             },
             rule: `go-${absolute.key}`,
         };
+    }
+
+    // —— 6.5 「跑50米」：跑 + 距离 = 前进且这一段用跑速 ——
+    //
+    // 之前两头落空：调速规则（pace-run）要求**整句**纯调速，「跑50米」带距离不算；
+    // 下面的「走」兜底词表又不认「跑」。实测用户说「跑50米」直接没听懂 ——
+    // 这是「简单任务做不了」的典型案例。
+    //
+    // 收窄条件：剥掉距离和语气词后**只剩跑类动词**才算。这样
+    // 「跑过去看看那个风机」「跑着去B点」不会被这条误吃，仍交给参照物/模型层。
+    if (/\d/.test(bare) || /[一二两三四五六七八九十百]+\s*米/.test(bare)) {
+        const withoutMeters = bare
+            .replace(/(?:\d+(?:\.\d+)?|[一二两三四五六七八九十百]+)\s*(?:米|m\b|公尺)/i, '')
+            .replace(/(?:远|的路|路程|吧|啊|呀|哦|嘛|了|着)+/g, '')
+            .trim();
+        if (/^(?:你|请|给我|帮我|先|快|马上)?(?:跑|快跑|冲刺|跑步|跑过去|跑前往)$/.test(withoutMeters)) {
+            const m2 = extractMeters(text) ?? ctx.defaultStep;
+            const p = relativeToWorld(ctx.pose, m2, 0);
+            return { raw: text, confidence: 1, action: 'go', pace: 'run', position: p, rule: 'go-run-distance' };
+        }
     }
 
     // —— 7. 方向 + 可选距离 ——

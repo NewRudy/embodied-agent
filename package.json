@@ -1,6 +1,6 @@
 {
   "name": "embodied-agent",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "type": "module",
   "description": "具身智能体：目标驱动的数字人漫游层。说一句话，人物自己走过去；语音全双工。",
   "keywords": [

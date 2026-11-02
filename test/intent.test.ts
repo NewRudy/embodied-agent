@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { parseIntent, type ParseContext } from '../src/intent.ts';
+import { validateLlmIntent } from '../src/llm-decider.ts';
 import type { Goal, Vec3 } from '../src/types.ts';
 
 function ctx(overrides: Partial<ParseContext> = {}): ParseContext {
@@ -312,4 +313,70 @@ test('不带 context 也能安全解析（npm 装包后的第一触点）', () =
     // 相对移动：无上下文时以兜底位姿解析（数字上无意义但不崩溃）
     const walk = parseIntent('往前走10米');
     assert.equal(walk?.action, 'go');
+});
+
+test('「跑50米」= 前进 + 跑速（之前两头落空）', () => {
+    // 0.1.x 里调速规则要求整句纯调速，「走」兜底又不认「跑」—— 用户说跑50米直接没听懂
+    const r = parseIntent('跑50米', ctx());
+    assert.equal(r?.action, 'go');
+    assert.equal(r?.pace, 'run');
+    assert.equal(r?.position?.north, 50, '默认朝北（yaw=0），目标在北 50 米');
+    assert.equal(r?.confidence, 1);
+    const r2 = parseIntent('帮我跑50米', ctx());
+    assert.equal(r2?.action, 'go', '带称呼词也能命中');
+});
+
+test('「跑过去看看那个风机」不被跑+距离规则误吃', () => {
+    // 剥掉距离后还剩「跑过去看看那个风机」不止是跑 → 不命中，交给参照物/模型层
+    const r = parseIntent('跑30米过去看看', ctx());
+    assert.notEqual(r?.rule, 'go-run-distance');
+});
+
+test('一次性动作：跳一下/跳个舞/出拳/翻滚/捡起来', () => {
+    // 「跳一下」0.1.x 落 null + LLM 置信度 0.35 被拒 —— 现在规则层直接高置信命中
+    assert.equal(parseIntent('跳一下', ctx())?.clip, 'jump');
+    assert.equal(parseIntent('跳一下', ctx())?.action, 'act');
+    assert.equal(parseIntent('跳一跳', ctx())?.clip, 'jump');
+    assert.equal(parseIntent('蹦跶一下', ctx())?.clip, 'jump');
+    // 「跳舞」必须先于「跳」判断
+    assert.equal(parseIntent('跳个舞', ctx())?.clip, 'dance');
+    assert.equal(parseIntent('跳支舞吧', ctx())?.clip, 'dance');
+    assert.notEqual(parseIntent('跳个舞', ctx())?.clip, 'jump');
+    assert.equal(parseIntent('出拳', ctx())?.clip, 'punch');
+    assert.equal(parseIntent('打个滚', ctx())?.clip, 'roll');
+    assert.equal(parseIntent('捡起来', ctx())?.clip, 'pickup');
+    assert.equal(parseIntent('打个招呼', ctx())?.clip, 'interact');
+    // 不该误判的
+    assert.equal(parseIntent('跳伞', ctx()), null);
+});
+
+test('「停」与动作互不干扰', () => {
+    assert.equal(parseIntent('停下', ctx())?.action, 'stop');
+    assert.equal(parseIntent('跳一下', ctx())?.action, 'act');
+});
+
+test('LLM 校验：只给距离的 go（跑50米 → direction=null meters=50）不再判废', () => {
+    // deepseek 之前被迫编造 direction，置信度被打到 0.5x 全落「没把握」。
+    // 现在显式支持 distance-only 路径，且 pace 透传。
+    const intent = validateLlmIntent(
+        { action: 'go', target: null, direction: null, meters: 50, degrees: null, pace: 'run', fly: null, clip: null, confidence: 0.95 },
+        ctx(), 'test-model',
+    );
+    assert.equal(intent?.action, 'go');
+    assert.equal(intent?.pace, 'run');
+    assert.equal(intent?.position?.north, 50);
+    assert.equal(intent?.confidence, 0.95);
+
+    const act = validateLlmIntent(
+        { action: 'act', target: null, direction: null, meters: null, degrees: null, pace: null, fly: null, clip: 'jump', confidence: 0.95 },
+        ctx(), 'test-model',
+    );
+    assert.equal(act?.action, 'act');
+    assert.equal(act?.clip, 'jump');
+
+    // 不认识的 clip 仍然判废
+    assert.equal(validateLlmIntent(
+        { action: 'act', target: null, direction: null, meters: null, degrees: null, pace: null, fly: null, clip: '瞬移', confidence: 0.99 },
+        ctx(), 'test-model',
+    ), null);
 });

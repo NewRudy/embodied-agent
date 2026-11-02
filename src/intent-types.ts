@@ -19,7 +19,17 @@ export type IntentAction =
     | 'turn'      // 原地转向
     | 'run'       // 切换快慢
     | 'fly'       // 飞行开关
+    | 'act'       // 一次性动作（跳一下/跳舞/出拳……原地播一段动画，不移动）
     | 'unknown';
+
+/** 一次性动作的语义键。真正的动画 clip 名由场景配置映射（每个模型不一样）。 */
+export type ActionKey =
+    | 'jump'      // 跳一下
+    | 'dance'     // 跳个舞
+    | 'punch'     // 出拳
+    | 'roll'      // 翻滚
+    | 'pickup'    // 捡起来
+    | 'interact'; // 互动（打招呼/操作面前的东西）
 
 export interface Intent {
     action: IntentAction;
@@ -27,8 +37,10 @@ export interface Intent {
     position?: Vec3;
     /** 原地转向角度（弧度，左负右正）。 */
     yawDelta?: number;
-    /** run 意图的目标速度档。 */
+    /** run 意图的目标速度档。go 带 run 时表示「这一段用跑的」。 */
     pace?: 'walk' | 'run';
+    /** act 意图的语义动作键（jump/dance/punch/roll/pickup/interact）。 */
+    clip?: ActionKey;
     /** fly 意图的目标状态。 */
     fly?: boolean;
     /** 原始输入，便于日志。 */

@@ -47,7 +47,9 @@ export interface LlmDeciderOptions {
     cooldownMs?: number;
 }
 
-const ALLOWED_ACTIONS = ['go', 'stop', 'revise', 'turn', 'run', 'fly'] as const;
+const ALLOWED_ACTIONS = ['go', 'stop', 'revise', 'turn', 'run', 'fly', 'act'] as const;
+/** act 允许的语义动作键（对应场景 actions 配置的键，不是动画 clip 名）。 */
+const ALLOWED_CLIPS = ['jump', 'dance', 'punch', 'roll', 'pickup', 'interact'] as const;
 type AllowedAction = typeof ALLOWED_ACTIONS[number];
 
 /** 单调时钟。浏览器和 Node 都有 performance.now()。 */
@@ -68,21 +70,26 @@ function buildSystemPrompt(references: Array<{ name: string; description?: strin
         `场景里可去的参照物只有：${refList}`,
         '',
         '允许的动作（只能从中选一个，不能发明）：',
-        '- go：去某个地方。target 必须是上面列出的参照物名；若用户说的是方位，则 target=null 并给 direction+meters',
+        '- go：去某个地方。target 必须是上面列出的参照物名；方位用 direction（forward/backward/left/right）+ meters；只说距离没说方向（「跑50米」）时 direction=forward',
         '- stop：停下',
         '- revise：在当前目标基础上微调。target=null，给 direction（left/right/forward/backward）+ meters',
         '- turn：原地转向。degrees 为角度，左负右正',
         '- run：切换步速。pace=walk 或 run',
         '- fly：起飞/降落。fly=true/false',
+        '- act：原地做一次性动作（不移动）。clip 从 jump/dance/punch/roll/pickup/interact 里选',
         '',
         '输出格式（严格 JSON，不要 markdown 代码块，不要多余字段）：',
-        '{"action":"go","target":"A点","direction":null,"meters":null,"degrees":null,"pace":null,"fly":null,"confidence":0.95}',
+        '{"action":"go","target":null,"direction":"forward","meters":50,"degrees":null,"pace":"run","fly":null,"clip":null,"confidence":0.95}',
+        '{"action":"act","target":null,"direction":null,"meters":null,"degrees":null,"pace":null,"fly":null,"clip":"jump","confidence":0.95}',
         '',
         '规则：',
         '1. 拿不准就把 confidence 调低（低于 0.6），不要硬猜',
         '2. target 只能填上面列出的参照物名，不能编造',
         '3. 用户说「那边」「那里」这类没有具体指向的话，confidence 给 0.3 以下',
         '4. 用户用外观描述指代（「那个绿色的点」「中间那个」）时，只能靠括号里的描述来匹配；描述里没有的特征不要猜',
+        '5. **置信度标定**：指令明确、动作在清单里、参数完整时，confidence 必须 ≥ 0.9 ——「跑50米」「跳一下」「去A点」这类都算明确。',
+        '   只有真含糊（没指向、自相矛盾、参照物对不上）才给低分。把「明确指令」评成 0.3-0.6 是最严重的错误，比猜错还糟。',
+        '6. 「跑/走 + 数字 + 米」= go：direction=forward，pace 按动词（跑=run，走=walk），meters=数字',
     ].join('\n');
 }
 
@@ -96,7 +103,7 @@ export function validateLlmIntent(
     const o = raw as Record<string, unknown>;
 
     // 严格字段集合：多一个字段就判废（防止模型夹带私货）
-    const allowed = new Set(['action', 'target', 'direction', 'meters', 'degrees', 'pace', 'fly', 'confidence']);
+    const allowed = new Set(['action', 'target', 'direction', 'meters', 'degrees', 'pace', 'fly', 'clip', 'confidence']);
     for (const key of Object.keys(o)) {
         if (!allowed.has(key)) return null;
     }
@@ -122,14 +129,24 @@ export function validateLlmIntent(
             if (target) {
                 const ref = ctx.resolve(target);
                 if (!ref) return null; // 模型编造了不存在的参照物 → 判废
-                return { ...base, action: 'go', position: { ...ref } };
+                const pace = o.pace === 'run' ? 'run' as const : o.pace === 'walk' ? 'walk' as const : undefined;
+                return { ...base, action: 'go', position: { ...ref }, ...(pace ? { pace } : {}) };
+            }
+            // 路径三：只给距离（「跑50米」）→ 按当前朝向前进。
+            // 之前没有这条路：模型被迫编 direction=forward，置信度被打到 0.5x，
+            // 全部落到「没把握」。现在显式支持：direction=null + meters 直接放行。
+            if (!direction && meters != null && meters > 0 && meters <= 500) {
+                const pace = o.pace === 'run' ? 'run' as const : o.pace === 'walk' ? 'walk' as const : undefined;
+                const pos = relativeTo(ctx.pose, 'forward', meters);
+                return { ...base, action: 'go', position: pos, ...(pace ? { pace } : {}) };
             }
             // 路径二：方向 + 距离
             if (!direction || !isDirection(direction)) return null;
             const d = meters ?? ctx.defaultStep;
             if (d <= 0 || d > 500) return null;
             const pos = relativeTo(ctx.pose, direction, d);
-            return { ...base, action: 'go', position: pos };
+            const pace = o.pace === 'run' ? 'run' as const : o.pace === 'walk' ? 'walk' as const : undefined;
+            return { ...base, action: 'go', position: pos, ...(pace ? { pace } : {}) };
         }
 
         case 'revise': {
@@ -161,6 +178,14 @@ export function validateLlmIntent(
         case 'fly': {
             if (typeof o.fly !== 'boolean') return null;
             return { ...base, action: 'fly', fly: o.fly };
+        }
+
+        case 'act': {
+            const clip = typeof o.clip === 'string' && (ALLOWED_CLIPS as readonly string[]).includes(o.clip)
+                ? (o.clip as typeof ALLOWED_CLIPS[number])
+                : null;
+            if (!clip) return null;
+            return { ...base, action: 'act', clip };
         }
 
         default:

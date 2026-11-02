@@ -79,7 +79,9 @@ const LLM = (import.meta.env.EMBODIED_LLM_ENABLED === '1' || location.search.inc
         baseUrl: '/llm',
         model: import.meta.env.EMBODIED_LLM_MODEL || 'workbuddy-ai/deepseek-v4.1-flash',
         apiKey: 'proxy', // 占位符，仅本地 demo；生产必须换成后端代理
-        timeoutMs: 800,
+        // 800ms 曾把代理链路上的 LLM 全部掐死（AbortError → 永远没听懂）。
+        // LLM 是异步补位、不阻塞规则层，超时只影响「多晚收到补位答案」，3 秒合理。
+        timeoutMs: 8000,
     }
     : false;
 
@@ -296,7 +298,7 @@ function stopVoice() {
 
 // —— UI ——
 const ui = mountOrbUI(scene, {
-    quickCommands: ['去A点', '去B点', '去C点', '往左一点', '跑起来', '停'],
+    quickCommands: ['去A点', '去B点', '跑50米', '往左一点', '跑起来', '停'],
     // 内置识别的临时结果不进 scene，得自己提供读法。
     // 早期版本是在外面 setInterval 直接写 #transcript，会和本组件的同步互相覆盖。
     transcript: () => partial,
@@ -311,7 +313,9 @@ orb = ui;
 for (const line of pendingLogs.reverse()) ui.log(line);
 pendingLogs.length = 0;
 
-log('就绪。试试「去A点」「去B点」「往左一点」「跑起来」「停」。');
+log('就绪。试试「去A点」「跑50米」「往左一点」「跑起来」「停」。');
+log('ℹ️ 这个 demo 刻意零资产（人物是三角形），用来证明包不依赖任何 3D 引擎。');
+log('ℹ️ 要看真实的 3D 角色模型（带跳/舞/拳等动作动画），请打开 /demo/wind/ —— 风电场 + UAL1 角色。');
 
 // 调试出口
 (window as any).__scene = { scene, pose, body, PLACES, ui };

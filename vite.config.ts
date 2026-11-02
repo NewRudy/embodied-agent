@@ -7,6 +7,9 @@ const CESIUM_BASE = '/xunjie-assets/cesium/';
 
 export default defineConfig({
     root: __dirname,
+    // demo 里 import.meta.env.EMBODIED_LLM_* 读的是这个前缀。不加的话
+    // 这些变量永远 undefined —— 文档写了、代码读了、但 vite 不暴露，纯摆设。
+    envPrefix: ['VITE_', 'EMBODIED_'],
     server: {
         host: true,
         port: 5180,

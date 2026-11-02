@@ -64,6 +64,26 @@ export interface BodyLike {
      * `getYaw()`，没有绝对设置。适配见 `resolveBody`。
      */
     setScriptedYaw?(yaw: number | null): void;
+    /**
+     * 播一段**一次性动作**动画（跳/出拳/跳舞……），播完自动回到之前的状态。
+     *
+     * 与 `playPlayerAnimationByClipName` 的区别：那个是**锁定** locomotion
+     * 循环 clip；这个是插播一段就还。`cesium-player-controller` 的适配见
+     * `resolveBody`（用它的 AnimationSystem `register(loop:false)` +
+     * `play(returnToPrev:true)`，播完引擎自己回上一个动画）。
+     *
+     * 不实现时动作指令静默跳过（2D 角色/无动画模型的正常降级）。
+     */
+    playActionClip?(clipName: string): void;
+    /**
+     * 让身体做它**原生**的跳跃（物理位移 + 跳跃动画），有则返回 true。
+     *
+     * 为什么单独立方法而不是复用 playActionClip：起跳 clip 只是原地动画，
+     * 没有真实位移 —— 人物蹲一下又站起来，看着像假跳。带物理的引擎
+     * （cesium-player-controller 走 applyAction('jump')：动画 + requestJump + 离地）
+     * 应该优先走原生跳跃。没有原生跳跃的引擎由调用方降级到 playActionClip。
+     */
+    startJump?(): boolean;
 }
 
 /**
@@ -146,6 +166,45 @@ export function resolveBody(raw: unknown): BodyLike {
         }
     }
 
+    // 一次性动作：引擎的 AnimationSystem 有现成的「插播一段就还」能力 ——
+    //   register(key, clip, { loop: false })  注册为非循环
+    //   play(key, { force: true, returnToPrev: true })  播完自动回上一个动画
+    //
+    // key 直接用 clip 名，同一个 clip 只注册一次（重复 register 会堆积 runtime）。
+    if (typeof body.playActionClip !== 'function') {
+        const anim = (body as { animation?: unknown }).animation as EngineAnimation | undefined;
+        if (anim && typeof anim.register === 'function' && typeof anim.play === 'function') {
+            const registered = new Set<string>();
+            body.playActionClip = (clipName: string) => {
+                if (!registered.has(clipName)) {
+                    anim.register!.call(anim, clipName, clipName, { loop: false });
+                    registered.add(clipName);
+                }
+                anim.play!.call(anim, clipName, { force: true, returnToPrev: true });
+                // 记录动作窗口：applyOutput 的「交还控制权」会解锁动画选择，
+                // 不加窗的话「走路中说跳一下」的下一帧就把跳动画打回 idle。
+                actionUntil.set(body, Date.now() + 3000);
+            };
+        }
+    }
+
+    // 原生跳跃：引擎有 applyAction('jump') 时走完整跳跃（动画 + 物理位移）。
+    // applyAction 在 controller.input（InputSystem）上，不在 controller 本体 ——
+    // 逐个翻引擎源码找到的，别移到别处。触发后立刻 release —— space 标志只是
+    // 按键状态，起跳请求已经发出，按住不放反而会让某些引擎落地后二次起跳。
+    if (typeof body.startJump !== 'function') {
+        const input = (body as { input?: unknown }).input as EngineInput | undefined;
+        if (input && typeof input.applyAction === 'function') {
+            const applyAction = input.applyAction.bind(input);
+            body.startJump = () => {
+                applyAction('jump', true);
+                applyAction('jump', false);
+                actionUntil.set(body, Date.now() + 3000);
+                return true;
+            };
+        }
+    }
+
     return body;
 }
 
@@ -155,6 +214,19 @@ const wasEngaged = new WeakMap<BodyLike, boolean>();
 const lastClip = new WeakMap<BodyLike, string>();
 /** 每个 body 上一次下发的播放速率，避免每帧重复写。 */
 const lastTimeScale = new WeakMap<BodyLike, number>();
+/** 一次性动作的保护窗截止时刻。窗内不做动画解锁（见 resolveBody 的 playActionClip）。 */
+const actionUntil = new WeakMap<BodyLike, number>();
+
+/** `cesium-player-controller` 的 AnimationSystem 公开面（只用到这两个方法）。 */
+interface EngineAnimation {
+    register?: (key: string, clipName: string, opts?: { loop?: boolean }) => void;
+    play?: (key: string, opts?: { force?: boolean; returnToPrev?: boolean }) => void;
+}
+
+/** `cesium-player-controller` 的 InputSystem 公开面（原生跳跃入口）。 */
+interface EngineInput {
+    applyAction?: (action: string, pressed: boolean) => void;
+}
 
 const STOP_MOVEMENT: MovementCommand = { east: 0, north: 0, up: 0, run: false, speedMetersPerSecond: 0 };
 
@@ -195,8 +267,14 @@ export function applyOutput(body: BodyLike, out: AgentOutput, options: ApplyOpti
         if (prevEngaged) {
             // 交接时把播放速率还原，别让下一段手动操作继承我们的倍速
             body.setPlayerAnimationTimeScale?.(1);
-            // 同时解锁动画选择，否则用户按 WASD 时画面还卡在我们的 clip 上
-            body.playPlayerAnimationByClipName?.(null);
+            // 同时解锁动画选择，否则用户按 WASD 时画面还卡在我们的 clip 上。
+            //
+            // 但**动作保护窗内不解锁**：「走路中说跳一下」时目标到达/取消的
+            // 交接恰好发生在跳动画的前几帧，一解锁（setAnimationByPressed）
+            // 引擎立刻按按键重选动画，跳还没起跳就被打回 idle。
+            if (Date.now() >= (actionUntil.get(body) ?? 0)) {
+                body.playPlayerAnimationByClipName?.(null);
+            }
             lastTimeScale.set(body, 1);
             lastClip.delete(body);
         }

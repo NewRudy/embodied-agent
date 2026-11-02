@@ -196,24 +196,62 @@ const STYLE = `
 #toggle:hover { color: var(--text); border-color: rgba(78, 168, 255, .5); transform: scale(1.08); }
 #toggle[aria-expanded="true"] { color: var(--accent); border-color: rgba(78, 168, 255, .55); }
 
-/* 日志：跟着 dock 走，不另设固定定位点。
-   左上角是宿主页面 HUD（图例、标题、状态栏）最常占的位置，
-   固定在那儿会和宿主撞在一起 —— sandbox 的图例就被盖住过。 */
-#logWrap {
-    width: 100%;
-    max-height: 38vh; overflow: auto;
-    padding: 10px 12px;
-    font: 11px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace;
-    color: var(--muted);
-    background: rgba(18, 22, 28, .9);
+/* 对话区：聊天气泡，不是等宽日志流。
+   用户指令右侧蓝色，角色回复左侧深灰，调试细节（rule/llm 轨迹）压成小字。
+   左上角是宿主页面 HUD 最常占的位置，所以对话区跟着 dock 走（右下）。 */
+#chat {
+    width: min(340px, calc(100vw - 40px));
+    max-height: min(46vh, 420px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    display: flex; flex-direction: column; gap: 7px;
+    padding: 12px;
+    background: rgba(18, 22, 28, .88);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 16px;
     backdrop-filter: blur(12px);
     pointer-events: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255,255,255,.18) transparent;
 }
-#logWrap[hidden] { display: none; }
-#logWrap div { padding: 1px 0; white-space: pre-wrap; word-break: break-all; }
-#logWrap div:first-child { color: var(--text); }
+#chat[hidden] { display: none; }
+
+#chat .row-user { display: flex; justify-content: flex-end; }
+#chat .row-agent { display: flex; justify-content: flex-start; }
+
+#chat .bubble {
+    max-width: 82%;
+    padding: 8px 12px;
+    border-radius: 14px;
+    font-size: 13.5px;
+    line-height: 1.55;
+    word-break: break-word;
+    white-space: pre-wrap;
+}
+#chat .row-user .bubble {
+    background: linear-gradient(135deg, #3d8fe0, #4ea8ff);
+    color: #fff;
+    border-bottom-right-radius: 5px;
+}
+#chat .row-agent .bubble {
+    background: rgba(255, 255, 255, .07);
+    border: 1px solid rgba(255, 255, 255, .08);
+    border-bottom-left-radius: 5px;
+}
+#chat .row-agent .bubble.dim {
+    color: var(--muted);
+    background: rgba(255, 255, 255, .04);
+    font-size: 12.5px;
+}
+
+/* 调试轨迹（rule/llm 解析细节）：小号等宽，弱化 */
+#chat .trace {
+    font: 10.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: rgba(139, 149, 163, .78);
+    padding: 0 4px;
+    word-break: break-all;
+    white-space: pre-wrap;
+}
 
 @media (max-width: 480px) {
     :host { right: 14px; bottom: 14px; }
@@ -256,9 +294,9 @@ export function mountOrbUI(scene: EmbodiedScene, options: OrbUIOptions = {}): Or
     root.appendChild(style);
 
     // —— 结构 ——
-    const logWrap = document.createElement('div');
-    logWrap.id = 'logWrap';
-    logWrap.hidden = true;
+    const chat = document.createElement('div');
+    chat.id = 'chat';
+    chat.hidden = true; // 第一条消息出现时自动展开
 
     const dock = document.createElement('div');
     dock.id = 'dock';
@@ -286,10 +324,11 @@ export function mountOrbUI(scene: EmbodiedScene, options: OrbUIOptions = {}): Or
     if (options.showLog !== false) {
         const logBtn = document.createElement('button');
         logBtn.type = 'button';
-        logBtn.textContent = '日志';
+        logBtn.textContent = '隐藏对话';
         logBtn.addEventListener('click', () => {
-            logWrap.hidden = !logWrap.hidden;
-            logBtn.textContent = logWrap.hidden ? '日志' : '收起日志';
+            chat.hidden = !chat.hidden;
+            userHidChat = chat.hidden; // 手动收起后，新消息不再自动弹出
+            logBtn.textContent = chat.hidden ? '显示对话' : '隐藏对话';
         });
         chips.appendChild(logBtn);
     }
@@ -325,8 +364,73 @@ export function mountOrbUI(scene: EmbodiedScene, options: OrbUIOptions = {}): Or
     mic.setAttribute('aria-label', '开启持续语音');
 
     orbRow.append(toggle, mic);
-    dock.append(logWrap, panel, info, orbRow);
+    dock.append(chat, panel, info, orbRow);
     root.append(dock);
+
+    // —— 对话渲染 ——
+    //
+    // log() 收到的是 create-scene 的诊断行（🗣 指令 / → 结果 / · 解析轨迹）。
+    // 按前缀分类成聊天气泡：用户右侧、角色回复左侧、轨迹压成小字。
+    // 场景/宿主还是只管 log() 一行字符串，分类是展示层的事。
+
+    /** 「→ 结果」行 → 给人看的回复。没收录的原样显示（去掉箭头）。 */
+    const REPLY_TEXT: Array<[RegExp, string]> = [
+        [/^没听懂/, '没听懂，请再说一次'],
+        [/^没把握/, '我不太确定，请再说一次'],
+        [/^停止$/, '好，停下了'],
+        [/^转向$/, '转过去了'],
+        [/^快跑$/, '好，跑起来'],
+        [/^慢走$/, '好，慢走'],
+        [/^起飞$/, '起飞了'],
+        [/^降落$/, '落地了'],
+    ];
+
+    let userHidChat = false;
+
+    function chatRow(cls: string, text: string, dim = false): void {
+        const row = document.createElement('div');
+        row.className = cls;
+        const bubble = document.createElement('div');
+        bubble.className = dim ? 'bubble dim' : 'bubble';
+        bubble.textContent = text;
+        row.appendChild(bubble);
+        chat.appendChild(row);
+    }
+
+    function chatTrace(text: string): void {
+        const el = document.createElement('div');
+        el.className = 'trace';
+        el.textContent = text;
+        chat.appendChild(el);
+    }
+
+    function appendChat(line: string): void {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+
+        if (trimmed.startsWith('🗣')) {
+            // 用户指令
+            chatRow('row-user', trimmed.replace(/^🗣\s*/, ''));
+            if (!userHidChat) { chat.hidden = false; }
+        } else if (/^·\s/.test(trimmed) || /^rule:|llm:/.test(trimmed)) {
+            // 解析轨迹（rule/llm 命中细节）—— 小字
+            chatTrace(trimmed);
+            if (!userHidChat) { chat.hidden = false; }
+        } else if (/^→/.test(trimmed)) {
+            // 角色回复：查友好文案表，没收录的去掉箭头原样显示
+            const body = trimmed.replace(/^→\s*/, '');
+            const friendly = REPLY_TEXT.find(([re]) => re.test(body))?.[1] ?? body;
+            chatRow('row-agent', friendly);
+            if (!userHidChat) { chat.hidden = false; }
+        } else {
+            // 系统杂项（ℹ️ 提示 / ⚠️ 警告 / ↳ 说明 / 初始欢迎语）—— 弱化
+            chatRow('row-agent', trimmed, true);
+            if (!userHidChat) { chat.hidden = false; }
+        }
+
+        while (chat.childElementCount > 80) chat.firstElementChild?.remove();
+        chat.scrollTop = chat.scrollHeight;
+    }
 
     // —— 交互 ——
     function setOpen(open: boolean) {
@@ -417,10 +521,7 @@ export function mountOrbUI(scene: EmbodiedScene, options: OrbUIOptions = {}): Or
         root,
         setOpen,
         log(line: string) {
-            const el = document.createElement('div');
-            el.textContent = line;
-            logWrap.prepend(el);
-            while (logWrap.childElementCount > 60) logWrap.lastElementChild?.remove();
+            appendChat(line);
         },
         dispose() {
             running = false;

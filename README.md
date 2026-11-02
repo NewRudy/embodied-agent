@@ -411,11 +411,38 @@ const scene = createEmbodiedScene({
 |---|---|
 | 停止 | 停 / 停下 / 别走了 / 别往东走 |
 | 相对方向 | 往前走 20 米 / 往左一点 / 往后退 |
+| **跑 + 距离** | 跑 50 米（前进且这一段用跑速）|
 | **绝对方位** | 往东走三十米 / 向西南走 15 米 / 朝北 |
 | 参照物 | 去 A 点 / 去 3 号风机 |
 | 中途修正 | 往左一点 / 再近一点 / 退一点（相对**当前目标**，不是人物位置） |
 | 转向 | 左转 45 度 / 右转 |
 | 快慢 / 飞行 | 跑起来 / 慢点 / 起飞 / 降落 |
+| **一次性动作** | 跳一下 / 跳个舞 / 出拳 / 打个滚 / 捡起来 / 打个招呼 |
+
+### 一次性动作：语义 → 动画 clip 由场景映射
+
+规则层只识别**语义键**（jump/dance/punch/roll/pickup/interact）——它不该知道你的
+模型里动画叫什么名字。clip 映射是场景配置：
+
+```ts
+createEmbodiedScene({
+    adapter,
+    player: resolveBody(playerController),
+    actions: {
+        jump: 'Jump_Start',      // 带物理引擎时「跳一下」优先走原生跳跃（真位移）
+        dance: 'Dance_Loop',
+        punch: 'Punch_Cross',
+        roll: 'Roll',
+        pickup: 'PickUp_Table',
+        interact: 'Interact',
+    },
+});
+```
+
+- 没配置的键：得到明确的「未配置」提示，不会静默失败
+- 身体没有 `playActionClip`（如 2D 角色）：得到「需要 3D 角色」提示
+- `resolveBody` 会自动给 cesium-player-controller 装上 `playActionClip`
+  （插播一段播完自动回 locomotion）和 `startJump`（引擎原生跳跃，带物理位移）
 
 ### 模型层能补什么
 

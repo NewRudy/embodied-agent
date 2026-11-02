@@ -23,7 +23,7 @@
 import type { Goal, Vec3 } from './types.ts';
 import { EmbodiedAgent } from './agent.ts';
 import { RuleDecider, decideFast, decideWithChain } from './intent.ts';
-import { CONFIDENCE_THRESHOLD, type Intent, type IntentDecider, type ParseContext } from './intent-types.ts';
+import { CONFIDENCE_THRESHOLD, type ActionKey, type Intent, type IntentDecider, type ParseContext } from './intent-types.ts';
 import { LlmDecider, type LlmDeciderOptions } from './llm-decider.ts';
 import { TaskQueue, splitSteps, type TaskStep } from './task-queue.ts';
 import { applyOutput, releaseBody, type BodyLike } from './body.ts';
@@ -74,7 +74,25 @@ export interface EmbodiedSceneOptions {
      * 自然速度后填进来。
      */
     locomotion?: LocomotionProfile;
+    /**
+     * 一次性动作的语义键 → 动画 clip 名映射（跳/舞/拳/滚/捡/互动）。
+     *
+     * clip 名属于模型资产，所以由场景配置：UAL1_Standard 是
+     * `{ jump: 'Jump_Start', dance: 'Dance_Loop', punch: 'Punch_Cross', roll: 'Roll', pickup: 'PickUp_Table', interact: 'Interact' }`。
+     * 没配置的键，对应指令会得到明确的「未配置」提示而不是静默失败。
+     */
+    actions?: Partial<Record<ActionKey, string>>;
 }
+
+/** 动作语义键 → 日志里的中文（不是动画名）。 */
+const ACTION_LABELS: Record<string, string> = {
+    jump: '跳一下',
+    dance: '跳个舞',
+    punch: '出拳',
+    roll: '翻滚',
+    pickup: '捡起来',
+    interact: '互动',
+};
 
 export interface SceneState {
     goalState: string;
@@ -431,8 +449,12 @@ export function createEmbodiedScene(options: EmbodiedSceneOptions): EmbodiedScen
                 break;
             case 'go':
             case 'approach':
+                // 「跑50米」：go 带跑速档 —— 先切速度再出发，跟「跑起来」同一机制
+                if (intent.pace === 'run') {
+                    agent.config.walkSpeed = agent.config.runSpeed;
+                }
                 agent.setGoal({ position: intent.position!, tolerance: 4, label: cleanLabel(text) });
-                log(`   → 出发 → ${text}`);
+                log(`   → ${intent.pace === 'run' ? '跑过去' : '出发'} → ${text}`);
                 break;
             case 'revise':
                 if (!agent.currentGoal) {
@@ -462,6 +484,37 @@ export function createEmbodiedScene(options: EmbodiedSceneOptions): EmbodiedScen
                     ?.setFlightMode?.(!!intent.fly);
                 log(`   → ${intent.fly ? '起飞' : '降落'}`);
                 break;
+            case 'act': {
+                // 一次性动作：语义键 → 场景配置的动画 clip 名 → 身体插播。
+                //
+                // 三层解耦的原因：规则层只知道「用户想跳舞」，动画名属于模型资产
+                // （UAL1 叫 Dance_Loop，你的模型可能叫 dance_01），身体层只管播。
+                // 动作是瞬时的，不建目标 —— 先停掉当前移动，否则人边跑边跳。
+                const clip = options.actions?.[intent.clip!];
+                if (!options.player) {
+                    log(`   → 动作需要角色身体（当前场景没配 player）`);
+                    break;
+                }
+                if (intent.clip === 'jump' && typeof options.player.startJump === 'function'
+                    && options.player.startJump()) {
+                    // 引擎原生跳跃优先（有物理位移的「真跳」），clip 起跳只是原地动画
+                    if (agent.currentGoal) stop();
+                    log(`   → 跳了一下`);
+                    break;
+                }
+                if (typeof options.player.playActionClip !== 'function') {
+                    log(`   → 动作「${intent.clip}」需要 3D 角色（当前身体不支持动画）`);
+                    break;
+                }
+                if (!clip) {
+                    log(`   → 场景未配置动作「${intent.clip}」的动画（actions.${intent.clip}）`);
+                    break;
+                }
+                if (agent.currentGoal) stop();
+                options.player.playActionClip(clip);
+                log(`   → ${ACTION_LABELS[intent.clip!] ?? intent.clip}`);
+                break;
+            }
             default:
                 log('   → 未支持的动作');
         }

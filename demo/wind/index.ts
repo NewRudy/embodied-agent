@@ -258,6 +258,15 @@ async function main() {
             config: { walkSpeed: 1.4, runSpeed: DEMO_RUN_SPEED, boundsRadius: 1500 },
         },
         locomotion: LOCOMOTION,
+        // 一次性动作（UAL1_Standard 的动画 clip 名）。模型换了这里要跟着换。
+        actions: {
+            jump: 'Jump_Start',
+            dance: 'Dance_Loop',
+            punch: 'Punch_Cross',
+            roll: 'Roll',
+            pickup: 'PickUp_Table',
+            interact: 'Interact',
+        },
         voice: {
             url: voiceUrl,
             workletUrl: '/voice/pcm-capture.js',
@@ -347,7 +356,7 @@ async function main() {
     // 整套界面来自 src/ui/orb.ts，场景只提供「有哪些快捷指令」。
     // 换场景不用重写 UI —— 这是「任意场景即插即用」的一部分。
     const ui = mountOrbUI(scene, {
-        quickCommands: ['去3号风机', '回运维点', '往前走20米', '往左一点', '跑起来', '停'],
+        quickCommands: ['去3号风机', '回运维点', '往前走20米', '跑50米', '跳一下', '跳个舞', '往左一点', '跑起来', '停'],
         showLog: true,
     });
     orb = ui;

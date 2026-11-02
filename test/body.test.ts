@@ -243,3 +243,44 @@ test('resolveBody 是幂等的：已经是 BodyLike 的对象不被改写', () =
     const body = resolveBody(existing);
     assert.equal(body, existing);
 });
+
+test('resolveBody 给带 AnimationSystem 的引擎装上 playActionClip', () => {
+    const registered: Array<[string, string, { loop?: boolean } | undefined]> = [];
+    const played: Array<[string, { force?: boolean; returnToPrev?: boolean } | undefined]> = [];
+    const anim = {
+        register(key: string, clip: string, opts?: { loop?: boolean }) { registered.push([key, clip, opts]); },
+        play(key: string, opts?: { force?: boolean; returnToPrev?: boolean }) { played.push([key, opts]); },
+    };
+    const raw: Record<string, unknown> = { animation: anim, getYaw: () => 0, addYaw: () => undefined };
+    const body = resolveBody(raw);
+    assert.equal(typeof body.playActionClip, 'function');
+
+    body.playActionClip!('Jump_Start');
+    assert.deepEqual(registered[0], ['Jump_Start', 'Jump_Start', { loop: false }]);
+    assert.deepEqual(played[0], ['Jump_Start', { force: true, returnToPrev: true }]);
+
+    // 同一 clip 第二次播不再重复注册
+    body.playActionClip!('Jump_Start');
+    assert.equal(registered.length, 1);
+    assert.equal(played.length, 2);
+});
+
+test('没有 AnimationSystem 的身体（如 sandbox 三角形）不装 playActionClip', () => {
+    const body = resolveBody({ move: null, setWorldMovement() {}, setScriptedYaw() {} });
+    assert.equal(body.playActionClip, undefined);
+});
+
+test('resolveBody 给带 applyAction 的引擎装上原生跳跃', () => {
+    const calls: Array<[string, boolean]> = [];
+    const raw: Record<string, unknown> = {
+        input: { applyAction(a: string, p: boolean) { calls.push([a, p]); } },
+    };
+    const body = resolveBody(raw);
+    assert.equal(body.startJump?.(), true);
+    assert.deepEqual(calls, [['jump', true], ['jump', false]], '触发后立即释放，不占住 space');
+});
+
+test('没有 input.applyAction 的身体不装 startJump（调用方降级到 clip）', () => {
+    const body = resolveBody({ setWorldMovement() {} });
+    assert.equal(body.startJump, undefined);
+});
