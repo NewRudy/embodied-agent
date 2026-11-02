@@ -80,7 +80,7 @@ const LLM = (import.meta.env.EMBODIED_LLM_ENABLED === '1' || location.search.inc
         model: import.meta.env.EMBODIED_LLM_MODEL || 'workbuddy-ai/deepseek-v4.1-flash',
         apiKey: 'proxy', // 占位符，仅本地 demo；生产必须换成后端代理
         // 800ms 曾把代理链路上的 LLM 全部掐死（AbortError → 永远没听懂）。
-        // LLM 是异步补位、不阻塞规则层，超时只影响「多晚收到补位答案」，3 秒合理。
+        // LLM 是异步补位、不阻塞规则层，超时只影响「多晚收到补位答案」，8 秒兜底。
         timeoutMs: 8000,
     }
     : false;

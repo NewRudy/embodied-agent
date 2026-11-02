@@ -246,6 +246,19 @@ async function main() {
     // —— 装配：引擎无关侧（意图、语音、每帧解算）——
     const scene = createEmbodiedScene({
         adapter: setup.adapter,
+        // 模型意图层：和 sandbox 同一套 /llm 代理配置（详细注释见 sandbox/index.ts）。
+        // ?llm=1 或 EMBODIED_LLM_ENABLED=1 开启；浏览器端读不到 process.env，
+        // 直连供应商的 EMBODIED_LLM_API_KEY 在 demo 里永远不生效 —— 必须走代理。
+        intent: {
+            llm: (import.meta.env.EMBODIED_LLM_ENABLED === '1' || location.search.includes('llm=1'))
+                ? {
+                    baseUrl: '/llm',
+                    model: import.meta.env.EMBODIED_LLM_MODEL || 'workbuddy-ai/deepseek-v4.1-flash',
+                    apiKey: 'proxy',
+                    timeoutMs: 8000,
+                }
+                : false,
+        },
         // resolveBody 把 playerController 适配成 BodyLike。
         // 不加这层的话，下面这些调用全都是静默失败的（都带 `?.`）：
         //   playPlayerAnimationByClipName → 引擎叫 playPlayerAnimationByName
